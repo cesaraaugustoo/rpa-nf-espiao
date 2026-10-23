@@ -1,0 +1,19 @@
+[project]
+name = "rpa-nf-espiao"
+version = "1.0.0"
+description = "RPA que baixa os DANFEs do Espião NF-e e os organiza nas pastas de notas fiscais, sem duplicidade."
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "playwright==1.64.1",
+    "pypdf==6.21.2",
+    "python-dotenv==1.2.4",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = "-p no:cacheprovider"

@@ -1,0 +1,32 @@
+# --- Dados sensíveis e locais: NUNCA versionar ---------------------------------
+# Credenciais do Espião NF-e
+.env
+# Configuração real (CNPJs, caminhos da máquina). Versionado: config/config.example.toml
+config/config.toml
+# Lista de apelidos de fornecedores (dados comerciais). Versionado: config/apelidos.example.md
+config/11-apelidos-fornecedores.md
+config/apelidos_extras.csv
+# Logs, relatórios de conferência e capturas de tela contêm dados das notas fiscais
+logs/
+# Qualquer PDF/XML de nota que caia na pasta do projeto
+*.pdf
+*.xml
+*.sqlite3
+*.sqlite3-*
+
+# --- Python --------------------------------------------------------------------
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+*.egg-info/
+build/
+dist/
+
+# --- Editores / SO -------------------------------------------------------------
+.vscode/
+.idea/
+Thumbs.db
+desktop.ini
+.DS_Store

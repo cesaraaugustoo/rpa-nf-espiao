@@ -1,0 +1,54 @@
+# Configuração do RPA de notas fiscais do Espião NF-e  (MODELO)
+#
+# Copie este arquivo para config/config.toml e ajuste. O config.toml real NÃO é versionado.
+# Credenciais NÃO ficam aqui: vão no arquivo .env (ESPIAO_USUARIO / ESPIAO_SENHA).
+# Caminhos relativos são resolvidos a partir da pasta do projeto.
+# %VARIAVEL% de ambiente é expandida (ex.: %LOCALAPPDATA%, %USERPROFILE%).
+
+[espiao]
+url_login = "https://app.espiaonfe.com.br/auth/login"
+headless = true               # false = mostra o navegador (útil para acompanhar/depurar)
+timeout_ms = 30000            # espera padrão de cada ação na tela
+timeout_download_ms = 90000   # espera máxima por um download
+
+[execucao]
+dias_retroativos = 1          # 0 = só hoje; 1 = hoje + ontem (pega nota emitida à noite)
+max_retentativas = 5          # nota que falhou é tentada de novo nas próximas N execuções
+dias_aguardar_xml = 6         # nota "Sem XML" é vigiada por até N dias antes de desistir
+baixar_canceladas = false     # NF cancelada na SEFAZ não é baixada
+
+[pastas]
+raiz_notas = '%USERPROFILE%\OneDrive\NOTAS FISCAIS'
+sufixo_rpa = "_RPA"           # vai no fim do nome: "ACME 231026_RPA.pdf"
+# Banco de controle e área temporária. Fica FORA do OneDrive de propósito:
+# SQLite sincronizado pelo OneDrive corre risco de lock e corrupção.
+dados = '%LOCALAPPDATA%\RPA_NF_ESP\dados'
+logs = 'logs'
+dias_manter_logs = 90
+
+[apelidos]
+# Fonte viva da lista de apelidos (ex.: um repositório de documentação da empresa).
+# Se não estiver acessível, usa a cópia local, atualizada sempre que a fonte é lida com sucesso.
+fonte = '%USERPROFILE%\docs\11-apelidos-fornecedores.md'
+copia_local = 'config/11-apelidos-fornecedores.md'
+usar_sugeridos = true         # também usa a seção "Apelidos sugeridos, a confirmar"
+extras = 'config/apelidos_extras.csv'   # sobreposições locais (CNPJ completo ou raiz)
+
+# Empresas consultadas a cada execução, na ordem abaixo.
+# "pasta" é o rótulo usado no nome da pasta do mês: "OUTUBRO 26 - <pasta>".
+# "aliases_pasta" são grafias antigas aceitas ao procurar uma pasta já existente.
+# Os CNPJs abaixo são FICTÍCIOS (apenas com dígito verificador válido).
+
+[[empresas]]
+cnpj = "11222333000181"
+loja = "Centro"
+razao_social = "EMPRESA EXEMPLO CENTRO LTDA"
+pasta = "LOJA CENTRO"
+aliases_pasta = []
+
+[[empresas]]
+cnpj = "44555666000181"
+loja = "Norte"
+razao_social = "EMPRESA EXEMPLO NORTE LTDA"
+pasta = "LOJA NORTE"
+aliases_pasta = ["LOJA NORTE LTDA"]
