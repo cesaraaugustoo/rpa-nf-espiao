@@ -1,0 +1,87 @@
+"""Nome do arquivo no padrão da casa e gravação segura na pasta de destino.
+
+Padrão: "APELIDO DDMMAA_RPA.pdf"; a 2ª, 3ª... nota do mesmo fornecedor no mesmo dia
+ganha " 2", " 3" antes do sufixo: "ACME 231026 2_RPA.pdf".
+A contagem considera também os arquivos salvos à mão (sem "_RPA"), e compara sem acento
+e sem caixa: "CAFE BOM 221026.pdf" conta como a 1ª nota de "CAFÉ BOM 221026".
+"""
+
+import os
+import re
+import shutil
+import time
+import unicodedata
+import uuid
+from datetime import date
+from pathlib import Path
+
+_INVALIDOS = re.compile(r'[<>:"|?*\x00-\x1f]')
+_RESERVADOS = {"CON", "PRN", "AUX", "NUL", *(f"COM{i}" for i in range(1, 10)), *(f"LPT{i}" for i in range(1, 10))}
+TAMANHO_MAX_NOME = 100
+
+
+def sem_acento(texto: str) -> str:
+    decomposto = unicodedata.normalize("NFKD", texto)
+    return "".join(c for c in decomposto if not unicodedata.combining(c))
+
+
+def normalizar(texto: str) -> str:
+    return re.sub(r"\s+", " ", sem_acento(texto)).strip().upper()
+
+
+def limpar_para_arquivo(texto: str) -> str:
+    t = texto.replace("/", "-").replace("\\", "-")
+    t = _INVALIDOS.sub("", t)
+    t = re.sub(r"\s+", " ", t).strip()
+    t = t[:TAMANHO_MAX_NOME].rstrip(". ")
+    if not t or t.upper() in _RESERVADOS:
+        t = f"FORNECEDOR {t}".strip()
+    return t
+
+
+def base_nome(apelido: str, emissao: date) -> str:
+    return f"{limpar_para_arquivo(apelido)} {emissao:%d%m%y}"
+
+
+def proximo_nome(pasta: Path, base: str, sufixo: str) -> str:
+    padrao = re.compile(
+        rf"^{re.escape(normalizar(base))}(?: (\d+))?(?:{re.escape(normalizar(sufixo))})?\.PDF$"
+    )
+    usados = []
+    if pasta.is_dir():
+        for arq in pasta.iterdir():
+            m = padrao.match(normalizar(arq.name))
+            if m:
+                usados.append(int(m.group(1) or 1))
+    if not usados:
+        return f"{base}{sufixo}.pdf"
+    return f"{base} {max(usados) + 1}{sufixo}.pdf"
+
+
+def gravar_sem_sobrescrever(origem: Path, pasta: Path, base: str, sufixo: str) -> Path:
+    """Copia `origem` para `pasta` com o próximo nome livre. Nunca sobrescreve um arquivo.
+
+    A cópia vai primeiro para um temporário na própria pasta e depois é renomeada:
+    no Windows o rename falha se o destino existir, o que fecha a janela de corrida
+    com alguém salvando um arquivo de mesmo nome ao mesmo tempo.
+    """
+    pasta.mkdir(parents=True, exist_ok=True)
+    temporario = pasta / f".~rpa-{uuid.uuid4().hex}.part"
+    try:
+        shutil.copyfile(origem, temporario)
+        for _ in range(20):
+            destino = pasta / proximo_nome(pasta, base, sufixo)
+            try:
+                os.rename(temporario, destino)
+                return destino
+            except FileExistsError:
+                continue
+        raise OSError(f"não foi possível achar um nome livre para {base!r} em {pasta}")
+    finally:
+        # Nunca deixa o temporário na pasta de notas, nem deixa a limpeza esconder o erro original.
+        for _ in range(3):
+            try:
+                temporario.unlink(missing_ok=True)
+                break
+            except OSError:
+                time.sleep(1)
