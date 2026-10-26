@@ -15,7 +15,7 @@ Situações de cada nota:
 
 Também confere cada arquivo "_RPA": se a nota dele pertence àquela empresa e se o nome bate com
 o padrão (apelido + data de emissão). Problemas que envolvem o RPA são marcados [RPA]; os
-demais (arquivos salvos à mão, notas anteriores à janela do RPA) aparecem como observação.
+demais (arquivos salvos à mão, notas anteriores ao início do RPA) aparecem como observação.
 """
 
 import logging
@@ -57,11 +57,11 @@ class Conferencia:
         self.hoje = hoje
         self.dias = min(dias, ALCANCE_MAXIMO_DIAS)
         self.pastas = GerenciadorPastas(cfg.raiz_notas, cfg.empresas, log, ensaio=True)
+        self.ledger = ledger
         self.indice = IndiceChaves(ledger, log)
 
     def executar(self, empresas: tuple[Empresa, ...]) -> tuple[bool, Path]:
         desde = self.hoje - timedelta(days=self.dias)
-        janela_rpa = {self.hoje - timedelta(days=i) for i in range(self.cfg.dias_retroativos + 1)}
         notas_por_empresa: dict[str, list[NotaEspiao]] = {}
         self.nao_conferidas: dict[str, str] = {}
         with sessao_espiao(self.cfg, self.log) as espiao:
@@ -86,7 +86,7 @@ class Conferencia:
         for empresa in empresas:
             notas = notas_por_empresa[empresa.cnpj]
             for nota in sorted(notas, key=lambda n: (n.emissao, n.emitente_nome)):
-                achados.append(self._situacao(empresa, nota, arquivos_por_chave, pasta_de, janela_rpa))
+                achados.append(self._situacao(empresa, nota, arquivos_por_chave, pasta_de))
             achados += self._conferir_arquivos_rpa(empresa, notas, meses, dona)
 
         return self._relatorio(empresas, notas_por_empresa, achados, desde)
@@ -114,7 +114,14 @@ class Conferencia:
 
     # --------------------------------------------------------------- situação
 
-    def _situacao(self, empresa, nota, arquivos_por_chave, pasta_de, janela_rpa) -> Achado:
+    def _inicio_responsabilidade(self, empresa: Empresa) -> date:
+        """Notas emitidas a partir deste dia são responsabilidade do RPA: desde a primeira pesquisa
+        completa da empresa (com a margem de dias_retroativos). Sem histórico, hoje e ontem."""
+        cobertura = self.ledger.cobertura(empresa.cnpj)
+        inicio = cobertura[0] if cobertura else self.hoje
+        return inicio - timedelta(days=self.cfg.dias_retroativos)
+
+    def _situacao(self, empresa, nota, arquivos_por_chave, pasta_de) -> Achado:
         arquivos = arquivos_por_chave.get(nota.chave, [])
         certos = [a for a in arquivos
                   if pasta_de.get(a.parent) == (empresa.cnpj, nota.emissao.year, nota.emissao.month)]
@@ -139,10 +146,10 @@ class Conferencia:
             if provaveis:
                 return Achado(empresa.pasta, "SEM CONFIRMAÇÃO", nota,
                               f"provavelmente em '{', '.join(provaveis)}' (PDF sem texto, chave ilegível)")
-        if nota.emissao in janela_rpa:
-            detalhe = "dentro da janela do RPA: será baixada na próxima execução (ou falhou, veja o log)"
+        if nota.emissao >= self._inicio_responsabilidade(empresa):
+            detalhe = "período coberto pelo RPA: será baixada na próxima execução (ou falhou, veja o log)"
             return Achado(empresa.pasta, "FALTANDO", nota, detalhe, do_rpa=True)
-        return Achado(empresa.pasta, "FALTANDO", nota, "anterior à janela do RPA (hoje e ontem): baixar à mão")
+        return Achado(empresa.pasta, "FALTANDO", nota, "anterior ao início do RPA: baixar à mão")
 
     def _conferir_arquivos_rpa(self, empresa: Empresa, notas: list[NotaEspiao], meses, dona) -> list[Achado]:
         achados = []
@@ -213,7 +220,7 @@ class Conferencia:
         manuais = len(problemas) - len(do_rpa)
         if manuais:
             linhas.append(f"Obs.: {manuais} problema(s) fora do alcance do RPA (arquivos salvos à mão ou notas "
-                          "anteriores a ontem). Estão listados acima, sem a marca [RPA].")
+                          "anteriores ao início do RPA). Estão listados acima, sem a marca [RPA].")
 
         self.cfg.dir_logs.mkdir(parents=True, exist_ok=True)
         caminho = self.cfg.dir_logs / f"conferencia_{datetime.now():%Y-%m-%d_%H%M}.txt"

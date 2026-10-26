@@ -59,6 +59,7 @@ class Executor:
         self.indice = IndiceChaves(ledger, log)
         self.apelidos: MapaApelidos | None = None
         self.staging = cfg.dir_dados / "staging"
+        self._sem_xml: list[NotaEspiao] = []  # notas "Sem XML" da empresa em processamento
 
     # --------------------------------------------------------------- execução
 
@@ -85,14 +86,14 @@ class Executor:
         self.log.info("-" * 70)
         self.log.info("Empresa %s - %s", empresa.rotulo, empresa.razao_social)
 
-        janela = {self.hoje - timedelta(days=i) for i in range(self.cfg.dias_retroativos + 1)}
-        em_aberto = self.ledger.em_aberto(empresa.cnpj)
         limite = self.hoje - timedelta(days=ALCANCE_MAXIMO_DIAS)
+        inicio_janela = self._inicio_janela(empresa, limite)
+        em_aberto = self.ledger.em_aberto(empresa.cnpj)
         alcancaveis = [r for r in em_aberto if r.emissao >= limite]
         for r in em_aberto:
             if r.emissao < limite:
                 self._encerrar(r, f"emissão há mais de {ALCANCE_MAXIMO_DIAS} dias, fora do alcance da pesquisa", resumo)
-        desde = min([min(janela)] + [r.emissao for r in alcancaveis])
+        desde = min([inicio_janela] + [r.emissao for r in alcancaveis])
         if alcancaveis:
             self.log.info("%d nota(s) em aberto de execuções anteriores serão tentadas de novo", len(alcancaveis))
 
@@ -110,7 +111,7 @@ class Executor:
             return resumo
 
         por_chave = {n.chave: n for n in notas}
-        alvos = {n.chave: n for n in notas if n.emissao in janela}
+        alvos = {n.chave: n for n in notas if inicio_janela <= n.emissao <= self.hoje}
         resumo.na_janela = len(alvos)
         for r in alcancaveis:
             if r.chave in por_chave:
@@ -123,20 +124,87 @@ class Executor:
                 self.log.warning("Nota aguardando XML não apareceu na pesquisa: NF %s de %s - %s",
                                  r.numero, f"{r.emissao:%d/%m/%Y}", r.emitente_nome)
         self.log.info(
-            "%d nota(s) no período pesquisado; %d emitida(s) em %s; %d alvo(s) neste ciclo",
-            len(notas), resumo.na_janela,
-            " e ".join(d.strftime("%d/%m") for d in sorted(janela, reverse=True)), len(alvos),
+            "%d nota(s) no período pesquisado; %d emitida(s) de %s a %s; %d alvo(s) neste ciclo",
+            len(notas), resumo.na_janela, f"{inicio_janela:%d/%m}", f"{self.hoje:%d/%m}", len(alvos),
         )
 
+        self._sem_xml: list[NotaEspiao] = []
         ordenados = sorted(alvos.values(), key=lambda n: (n.emissao, n.emitente_cnpj, _numero_ordenacao(n)))
         for nota in ordenados:
-            try:
-                self._processar_nota(espiao, empresa, nota, resumo)
-            except Exception as e:
-                self.log.debug("Erro inesperado na NF %s (%s)", nota.numero, nota.chave, exc_info=True)
-                self._registrar_falha(nota, empresa, f"erro inesperado: {resumir_erro(e)}", resumo)
-                self._tentar_recuperar(espiao)
+            self._processar_nota_protegido(espiao, empresa, nota, resumo)
+        if self._sem_xml:
+            self._investigar_sem_xml(espiao, empresa, desde, resumo)
+        # Todas as notas do período foram vistas: as que falharam já estão no ledger como pendentes.
+        if not self.ensaio:
+            self.ledger.registrar_cobertura(empresa.cnpj, self.hoje)
         return resumo
+
+    def _processar_nota_protegido(self, espiao: EspiaoNFe, empresa: Empresa, nota: NotaEspiao,
+                                  resumo: ResumoEmpresa) -> None:
+        try:
+            self._processar_nota(espiao, empresa, nota, resumo)
+        except Exception as e:
+            self.log.debug("Erro inesperado na NF %s (%s)", nota.numero, nota.chave, exc_info=True)
+            self._registrar_falha(nota, empresa, f"erro inesperado: {resumir_erro(e)}", resumo)
+            self._tentar_recuperar(espiao)
+
+    def _investigar_sem_xml(self, espiao: EspiaoNFe, empresa: Empresa, desde: date, resumo: ResumoEmpresa) -> None:
+        """Para cada nota "Sem XML", aciona "Investigar XML" (o Espião busca o XML na SEFAZ na hora),
+        pesquisa de novo e baixa no mesmo ciclo as que passaram a ter XML. Qualquer falha aqui só
+        mantém a nota aguardando: ela é verificada de novo na próxima execução."""
+        if self.ensaio:
+            for nota in self._sem_xml:
+                self.log.info("[ensaio] acionaria 'Investigar XML' na NF %s - %s", nota.numero, nota.emitente_nome)
+            return
+        investigadas = []
+        for nota in self._sem_xml:
+            try:
+                texto = espiao.investigar_xml(nota)
+                self.log.info("Investigar XML acionado: NF %s - %s. Resposta do site: %s",
+                              nota.numero, nota.emitente_nome, texto[:300] or "(sem texto)")
+                investigadas.append(nota)
+            except Exception as e:
+                self.log.warning("Não foi possível acionar 'Investigar XML' na NF %s: %s. "
+                                 "Segue aguardando a SEFAZ.", nota.numero, resumir_erro(e))
+                self.log.debug("Detalhes", exc_info=True)
+                espiao.capturar_tela(f"investigar_{nota.chave}")
+                self._tentar_recuperar(espiao)
+        if not investigadas:
+            return
+        try:
+            atuais = {n.chave: n for n in espiao.pesquisar_com_retentativa(empresa, desde, self.hoje)}
+        except Exception as e:
+            self.log.warning("Pesquisa após investigar o XML falhou (%s); as notas seguem aguardando.", resumir_erro(e))
+            self._tentar_recuperar(espiao)
+            return
+        for nota in investigadas:
+            atual = atuais.get(nota.chave)
+            if atual is not None and atual.tem_xml:
+                self.log.info("XML disponível após investigar: NF %s - %s", nota.numero, nota.emitente_nome)
+                resumo.aguardando_xml -= 1
+                self._processar_nota_protegido(espiao, empresa, atual, resumo)
+            else:
+                self.log.warning("Aguardando XML: NF %s - %s continua sem XML mesmo após investigar. "
+                                 "Nova tentativa na próxima execução.", nota.numero, nota.emitente_nome)
+
+    def _inicio_janela(self, empresa: Empresa, limite: date) -> date:
+        """Primeiro dia de emissão que esta execução precisa cobrir.
+
+        Normalmente é ontem (dias_retroativos = 1). Se a última pesquisa completa da empresa foi
+        há mais tempo (computador desligado ou suspenso, internet fora, site fora do ar), a janela
+        recua até ela, com a mesma margem: nenhuma nota emitida no intervalo fica para trás.
+        """
+        cobertura = self.ledger.cobertura(empresa.cnpj)
+        referencia = min(self.hoje, cobertura[1]) if cobertura else self.hoje
+        inicio = referencia - timedelta(days=self.cfg.dias_retroativos)
+        if cobertura and cobertura[1] < self.hoje - timedelta(days=1):
+            self.log.warning("Última pesquisa completa desta empresa foi em %s (sem execução desde então). "
+                             "Cobrindo as notas emitidas desde %s.", f"{cobertura[1]:%d/%m/%Y}", f"{max(inicio, limite):%d/%m/%Y}")
+        if inicio < limite:
+            self.log.error("O intervalo sem execução passa de %d dias: notas emitidas antes de %s precisam ser "
+                           "conferidas à mão (EXECUTAR_AGORA.bat --conferir).", ALCANCE_MAXIMO_DIAS, f"{limite:%d/%m/%Y}")
+            inicio = limite
+        return inicio
 
     def _tentar_recuperar(self, espiao: EspiaoNFe) -> None:
         try:
@@ -232,11 +300,11 @@ class Executor:
                 self.ledger.marcar(_dados(nota, empresa), Status.DESISTIDA, erro=motivo)
             resumo.desistidas += 1
             return
-        self.log.warning("Aguardando XML (só o resumo da SEFAZ por enquanto): %s. Será verificada nas próximas execuções.",
-                         rotulo)
+        self.log.info("Sem XML no Espião (só o resumo da SEFAZ): %s", rotulo)
         if not self.ensaio:
             self.ledger.marcar(_dados(nota, empresa), Status.AGUARDANDO_XML, erro="sem XML no Espião")
         resumo.aguardando_xml += 1
+        self._sem_xml.append(nota)
 
     def _registrar_falha(self, nota: NotaEspiao, empresa: Empresa, motivo: str, resumo: ResumoEmpresa) -> None:
         rotulo = f"NF {nota.numero} de {nota.emissao:%d/%m/%Y} - {nota.emitente_nome}"

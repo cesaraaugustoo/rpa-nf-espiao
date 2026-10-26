@@ -135,7 +135,8 @@ class EspiaoNFe:
         self.url_nfe = urljoin(cfg.url_login, "/history/nfe")
         page.set_default_timeout(cfg.timeout_ms)
         # Avisos/novidades em modal podem surgir a qualquer momento e cobrir a tela.
-        page.add_locator_handler(page.locator(".modal.show").first, self._fechar_modal, no_wait_after=True)
+        self._modal = page.locator(".modal.show").first
+        page.add_locator_handler(self._modal, self._fechar_modal, no_wait_after=True)
 
     # ------------------------------------------------------------------ sessão
 
@@ -449,6 +450,46 @@ class EspiaoNFe:
             texto = self._paginacao().inner_text()
             proxima.click()
             expect(self._paginacao()).not_to_have_text(texto)
+
+    # ------------------------------------------------------- investigar XML
+
+    def investigar_xml(self, nota: NotaEspiao) -> str:
+        """Aciona "Investigar XML" numa nota "Sem XML": o Espião busca o XML na SEFAZ na hora,
+        em vez de esperar a distribuição automática. Devolve o texto mostrado na janela.
+
+        Depois de fechar a janela é preciso pesquisar de novo para saber se o XML chegou.
+        O handler que fecha modais sozinho é suspenso aqui: esta janela é aberta de propósito.
+        """
+        pg = self.page
+        linha = self._localizar_linha(nota.chave)
+        botao = linha.locator("a[aria-label='Investigar XML']")
+        if not botao.count():
+            raise ErroEspiao("a linha da nota não tem o botão 'Investigar XML'")
+        pg.remove_locator_handler(self._modal)
+        try:
+            botao.scroll_into_view_if_needed()
+            try:
+                # O resgate costuma disparar uma chamada ao servidor; esperar por ela evita fechar cedo.
+                with pg.expect_response(lambda r: "espiaoCtrl" in r.url, timeout=30000):
+                    botao.click()
+            except TempoEsgotado:
+                self.log.debug("Nenhuma chamada ao servidor observada ao investigar o XML")
+            janela = pg.locator(".modal.show").first
+            janela.wait_for(state="visible", timeout=15000)
+            carregando = janela.locator(".spinner-border, .spinner-grow, [role='progressbar']")
+            try:
+                expect(carregando).to_have_count(0, timeout=60000)
+            except AssertionError:
+                self.log.warning("A janela de 'Investigar XML' continuou carregando por 60s; fechando assim mesmo")
+            pg.wait_for_timeout(1500)
+            texto = " ".join(janela.inner_text().split())
+            self._botao("Fechar", dentro=janela).click()
+            expect(pg.locator(".modal.show")).to_have_count(0, timeout=15000)
+            return texto
+        finally:
+            if pg.locator(".modal.show").count():  # erro no meio do caminho: não deixa a janela aberta
+                pg.keyboard.press("Escape")
+            pg.add_locator_handler(self._modal, self._fechar_modal, no_wait_after=True)
 
     # --------------------------------------------------------------- download
 

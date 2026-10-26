@@ -47,11 +47,36 @@ módulo a ajustar, e as regras de negócio continuam cobertas pelos testes.
 3. **Apelidos:** lidos da fonte configurada; a cópia local é atualizada (plano B).
 4. **Login:** até 3 tentativas para falhas passageiras; senha recusada encerra na hora.
 5. **Por empresa:**
-   - calcula a janela (`hoje` … `hoje - dias_retroativos`) e inclui as notas em aberto de execuções
-     anteriores, ampliando o período da pesquisa se preciso;
+   - calcula a janela (ver [Janela sem lacunas](#janela-sem-lacunas)) e inclui as notas em aberto de
+     execuções anteriores, ampliando o período da pesquisa se preciso;
    - pesquisa (com uma nova tentativa após recarregar a tela);
-   - para cada nota alvo: dedup → cancelada? → já na pasta? → sem XML? → baixa → valida → grava.
+   - para cada nota alvo: dedup → cancelada? → já na pasta? → sem XML? → baixa → valida → grava;
+   - para as notas "Sem XML": aciona *Investigar XML*, pesquisa de novo e baixa as que passaram a ter XML.
 6. **Resumo:** por empresa no log; situação da execução no ledger.
+
+## Janela sem lacunas
+
+O ledger guarda, por empresa, o primeiro e o último dia de **pesquisa completa** (tabela `cobertura`).
+O início da janela de cada execução é:
+
+```
+inicio = min(hoje, último dia coberto) - dias_retroativos      (limitado a 29 dias pelo site)
+```
+
+- **Execução horária normal:** o último dia coberto é hoje, e a janela fica em hoje + ontem.
+- **Primeira execução do dia:** o último dia coberto é ontem, e a janela inclui anteontem. Isso
+  cobre a nota de anteontem que só entrou no Espião depois da última execução de ontem.
+- **Computador desligado ou suspenso, internet ou site fora do ar:** a cobertura não avança, e a
+  próxima execução bem-sucedida recua até ela (fica registrado um AVISO no log).
+- **Mais de 29 dias sem execução:** cobre o máximo do site e registra ERRO pedindo conferência manual.
+
+Por que isso importa: no estudo de 29 dias (237 notas dos 4 CNPJs), 92% das notas entraram no
+Espião no dia da emissão e 8% no dia seguinte (XML muitas vezes de madrugada), nenhuma depois disso.
+O atraso da SEFAZ cabe na margem de 1 dia. O risco real é o computador ficar desligado ou
+suspenso, por exemplo num fim de semana: houve 14 notas emitidas em sábado e domingo no período.
+
+A cobertura só avança quando a pesquisa da empresa termina. Notas que falham no download já ficam
+no ledger como `PENDENTE`, com o próprio mecanismo de novas tentativas.
 
 ## Estados de uma nota (ledger)
 
@@ -62,7 +87,7 @@ stateDiagram-v2
     [*] --> CANCELADA: cancelada na SEFAZ
     [*] --> AGUARDANDO_XML: só o resumo da SEFAZ
     [*] --> PENDENTE: falha de download (1ª)
-    AGUARDANDO_XML --> BAIXADA: XML chegou
+    AGUARDANDO_XML --> BAIXADA: XML chegou (Investigar XML ou distribuição da SEFAZ)
     AGUARDANDO_XML --> DESISTIDA: XML não chegou em N dias
     PENDENTE --> BAIXADA: nova tentativa ok
     PENDENTE --> PENDENTE: nova falha (até 5)
@@ -74,7 +99,9 @@ Regras de contagem:
 
 - **Só falha de download conta tentativa.** Falha na *pesquisa* (site fora do ar, sessão
   disputada) não conta: a nota volta intacta na execução seguinte.
-- **"Sem XML" não é falha:** a nota é vigiada por até `dias_aguardar_xml` dias, sem gastar tentativas.
+- **"Sem XML" não é falha:** em cada execução o RPA aciona *Investigar XML* e, se o XML não vier,
+  a nota segue vigiada por até `dias_aguardar_xml` dias, sem gastar tentativas. Uma falha ao
+  investigar (botão ausente, janela diferente) só gera um AVISO.
 - Estados finais (`BAIXADA`, `JA_EXISTIA`, `CANCELADA`) nunca são reprocessados automaticamente.
 
 ## Deduplicação em duas camadas
@@ -137,7 +164,7 @@ NOTAS FISCAIS\2025\DEZEMBRO 25 - LOJA CENTRO          <- anos anteriores, achata
 | O arquivo baixado se chama `<chave>-danfe.pdf` | Se a chave não for a da linha clicada, o download é descartado. |
 | O período é um *DateRangePicker* que não aceita digitação confiável | Usa os atalhos (*Hoje*, *Últimos 7 dias*, *Últimos 30 dias*), o menor que cobre o período, e confere o valor aplicado. |
 | A sessão não sobrevive a `storage_state` | Login a cada execução (cerca de 6 s). |
-| Notas "Sem XML" não têm botão de download | Viram `AGUARDANDO_XML` e são vigiadas. |
+| Notas "Sem XML" não têm botão de download | O RPA clica em *Investigar XML* (`a[aria-label='Investigar XML']`), espera o resgate, fecha a janela em *Fechar* e pesquisa de novo. Durante isso, o fechador automático de janelas é suspenso. Sem XML ainda, viram `AGUARDANDO_XML`. |
 
 ## Decisões de infraestrutura
 

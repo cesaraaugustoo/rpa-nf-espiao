@@ -3,6 +3,27 @@
 Formato baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/); versões seguem
 [SemVer](https://semver.org/lang/pt-BR/).
 
+## [1.2.0] - 2026-10-26
+
+### Adicionado
+
+- Investigar XML automático: para cada nota "Sem XML", o RPA aciona *Investigar XML* no Espião
+  (que busca o XML na SEFAZ na hora), pesquisa de novo e baixa no mesmo ciclo. Antes, a nota
+  esperava a distribuição automática da SEFAZ, de 1 a 3 horas nos casos observados.
+
+## [1.1.0] - 2026-10-23
+
+### Adicionado
+
+- Janela sem lacunas: o RPA registra, por empresa, o último dia de pesquisa completa e, depois de
+  um período sem execução (computador desligado ou suspenso, internet ou site fora do ar), cobre
+  todo o intervalo, até o limite de 29 dias do site.
+
+### Alterado
+
+- A conferência considera responsabilidade do RPA todas as notas emitidas desde o início da
+  cobertura de cada empresa, e não só as de hoje e ontem.
+
 ## [1.0.0] - 2026-10-23
 
 ### Adicionado

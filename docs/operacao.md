@@ -24,7 +24,10 @@ O RPA roda sozinho de hora em hora. No dia a dia, basta:
 |---|---|---|
 | `BAIXADA: ...` | DANFE salvo na pasta | nenhuma |
 | `Já está na pasta como '...'` | alguém já tinha salvo a nota (o RPA reconheceu pela chave) | nenhuma |
-| `AVISO \| Aguardando XML` | a SEFAZ só entregou o resumo; não existe DANFE ainda | nenhuma: o RPA baixa quando chegar |
+| `Sem XML no Espião` + `Investigar XML acionado` | a SEFAZ só tinha entregado o resumo; o RPA pediu o XML ao Espião | nenhuma |
+| `XML disponível após investigar` | o XML veio e a nota é baixada no mesmo ciclo | nenhuma |
+| `AVISO \| Aguardando XML: ... continua sem XML mesmo após investigar` | a SEFAZ ainda não tem o XML | nenhuma: o RPA tenta de novo a cada execução |
+| `AVISO \| Não foi possível acionar 'Investigar XML'` | o botão ou a janela do site mudou | nenhuma de imediato (a nota segue aguardando); se persistir, revisar `espiao.py` |
 | `AVISO \| Possível duplicata: ... PDF sem texto` | há um PDF digitalizado com o mesmo nome; o RPA baixou o oficial também | conferir e apagar a cópia que sobrar, se quiser |
 | `ERRO \| FALHA (1ª): ...` | o download falhou; será tentado nas próximas execuções | nenhuma, a menos que se repita |
 | `ERRO \| DESISTIDA ... Baixar manualmente` | esgotou as tentativas, ou o XML nunca chegou | baixar à mão; ou `--reprocessar <chave>` |
@@ -60,7 +63,7 @@ Somente leitura: não baixa, não move e não grava nada nas pastas de notas. Ge
 | Situação | Significado |
 |---|---|
 | `OK` | está na pasta certa (mês da emissão, empresa destinatária) |
-| `FALTANDO` | não está em nenhuma pasta. Se for de hoje/ontem é responsabilidade do RPA (`[RPA]`); se for mais antiga, era manual |
+| `FALTANDO` | não está em nenhuma pasta. Se a emissão é do período que o RPA já cobre, é responsabilidade dele (`[RPA]`); se é anterior ao início do RPA, era manual |
 | `FORA DO LUGAR` | está só na pasta de outra empresa ou de outro mês |
 | `DUPLICADA` | a mesma nota está em mais de um arquivo |
 | `SEM CONFIRMAÇÃO` | há um PDF digitalizado (sem texto) com o nome esperado; provavelmente é ela |
@@ -88,6 +91,10 @@ O resultado final só fica `ATENÇÃO` quando há problema marcado `[RPA]`.
 | olhar só hoje / mais dias para trás | `dias_retroativos` |
 | mudar o número de tentativas | `max_retentativas` |
 | mudar horário ou frequência | `scripts\agendar_tarefa.ps1 -Inicio 06:00 -Horas 15` |
+
+Se o computador ficar desligado alguns dias, não é preciso fazer nada: a primeira execução depois de
+religar cobre todo o intervalo (aparece um AVISO `Última pesquisa completa desta empresa foi em ...`).
+Acima de 29 dias parado, rode `--conferir` e baixe à mão o que ficar `FALTANDO`.
 
 ## Solução de problemas
 

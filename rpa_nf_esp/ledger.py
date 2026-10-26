@@ -62,6 +62,12 @@ CREATE TABLE IF NOT EXISTS notas (
     atualizado_em     TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS ix_notas_status ON notas (status, empresa_cnpj);
+CREATE TABLE IF NOT EXISTS cobertura (
+    empresa_cnpj  TEXT PRIMARY KEY,
+    desde         TEXT NOT NULL,   -- dia da primeira pesquisa completa (início da responsabilidade do RPA)
+    ate           TEXT NOT NULL,   -- dia da última pesquisa completa
+    atualizado_em TEXT NOT NULL
+);
 DROP TABLE IF EXISTS indice_pdf;  -- v1 indexava também chaves citadas de outras notas
 CREATE TABLE IF NOT EXISTS indice_pdf_v2 (
     caminho   TEXT PRIMARY KEY,
@@ -233,6 +239,26 @@ class Ledger:
                 (Status.PENDENTE.value, _agora(), chave),
             )
         return cur.rowcount > 0
+
+    # -------------------------------------------------------------- cobertura
+
+    def cobertura(self, empresa_cnpj: str) -> tuple[date, date] | None:
+        """(primeiro dia, último dia) em que a empresa foi pesquisada por completo, ou None."""
+        linha = self._con.execute(
+            "SELECT desde, ate FROM cobertura WHERE empresa_cnpj = ?", (empresa_cnpj,)
+        ).fetchone()
+        return (date.fromisoformat(linha["desde"]), date.fromisoformat(linha["ate"])) if linha else None
+
+    def registrar_cobertura(self, empresa_cnpj: str, dia: date) -> None:
+        with self._con:
+            self._con.execute(
+                """
+                INSERT INTO cobertura (empresa_cnpj, desde, ate, atualizado_em) VALUES (?, ?, ?, ?)
+                ON CONFLICT (empresa_cnpj) DO UPDATE SET
+                    ate = MAX(cobertura.ate, excluded.ate), atualizado_em = excluded.atualizado_em
+                """,
+                (empresa_cnpj, dia.isoformat(), dia.isoformat(), _agora()),
+            )
 
     # ------------------------------------------------------------- índice de PDFs
 

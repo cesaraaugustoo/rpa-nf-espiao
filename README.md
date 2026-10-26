@@ -36,7 +36,9 @@ site instável, nota ainda sem XML, OneDrive ocupado, virada de mês e de ano.
 
 Em cada execução, para **cada empresa configurada**:
 
-1. Pesquisa no Espião as NF-e **recebidas** (por padrão, emitidas hoje e ontem).
+1. Pesquisa no Espião as NF-e **recebidas**: por padrão, as emitidas hoje e ontem. Se o computador
+   ficou desligado ou o site ficou fora do ar, cobre **todo o intervalo** desde a última pesquisa
+   completa daquela empresa, e nenhuma nota fica para trás.
 2. Ignora as que já foram tratadas e as que **já estão na pasta**. Para isso, lê a chave de acesso
    dentro dos PDFs existentes, inclusive os salvos à mão com qualquer nome.
 3. Baixa *Download Danfe em PDF*, confere que é um PDF íntegro **da nota certa** e salva como:
@@ -53,8 +55,9 @@ Além disso:
 - **Virada de mês:** os meses fechados vão para `<ano>\<ano>\` e as pastas do mês novo são criadas.
 - **Virada de ano:** o ano anterior é "achatado" (`<ano>\<ano>\*` volta para `<ano>\`) e nasce a
   pasta do ano novo.
-- **Nota sem XML:** quando a SEFAZ só entregou o resumo, a nota fica em espera e é baixada assim
-  que o XML chegar.
+- **Nota sem XML:** quando a SEFAZ só entregou o resumo, o RPA aciona **Investigar XML** (o Espião
+  busca o XML na SEFAZ na hora), pesquisa de novo e baixa no mesmo ciclo. Se ainda não houver XML,
+  a nota fica em espera e é tentada de novo a cada execução.
 - **Download que falhou:** é tentado de novo nas **5 execuções seguintes**; depois disso vira
   pendência manual, destacada no log.
 
@@ -69,7 +72,8 @@ flowchart TD
     E --> F{Para cada nota da janela<br/>+ pendências anteriores}
     F -->|já tratada| F
     F -->|PDF já na pasta<br/>chave lida no PDF| G[JA_EXISTIA]
-    F -->|sem XML| H[AGUARDANDO_XML]
+    F -->|sem XML| H[Investigar XML<br/>e pesquisar de novo] -->|XML chegou| J
+    H -->|ainda sem XML| H2[AGUARDANDO_XML]
     F -->|cancelada| I[CANCELADA]
     F -->|nova| J[Baixa DANFE] --> K{PDF íntegro<br/>e chave confere?}
     K -->|sim| L[Salva sem sobrescrever<br/>APELIDO DDMMAA_RPA.pdf] --> M[BAIXADA]
@@ -87,6 +91,7 @@ Detalhes de projeto, máquina de estados e particularidades do site: [docs/arqui
 | Não mistura empresas | Cada nota devolvida pela pesquisa é conferida contra o CNPJ da empresa pesquisada |
 | Nunca sobrescreve arquivo | Gravação via arquivo temporário + `rename`, que falha se o destino existir; conflitos de pasta ficam registrados para decisão manual |
 | Falha do site não perde nota | Erro de pesquisa não gasta tentativas; a nota volta na execução seguinte |
+| Computador desligado não perde nota | A janela recua até a última pesquisa completa de cada empresa (limite do site: 29 dias) |
 | Uma execução por vez | Trava de arquivo: uma execução agendada não começa se a anterior ainda estiver rodando |
 
 ## Requisitos
