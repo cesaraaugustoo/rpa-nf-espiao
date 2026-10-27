@@ -10,12 +10,13 @@ permissions:
 
 jobs:
   pytest:
-    name: pytest (Python ${{ matrix.python }})
-    # O RPA roda no Windows (Agendador de Tarefas, msvcrt, caminhos do OneDrive).
-    runs-on: windows-latest
+    name: pytest (${{ matrix.os }}, Python ${{ matrix.python }})
+    # O RPA roda no Windows (Agendador de Tarefas) e no Linux (VPS, systemd).
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
+        os: [windows-latest, ubuntu-latest]
         python: ["3.12", "3.13", "3.14"]
     steps:
       - uses: actions/checkout@v4

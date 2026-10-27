@@ -24,7 +24,7 @@ from datetime import date
 from pathlib import Path
 
 from .config import Empresa
-from .nomes import sem_acento
+from .nomes import renomear_sem_sobrescrever, sem_acento
 
 MESES = (
     "JANEIRO", "FEVEREIRO", "MARÇO", "ABRIL", "MAIO", "JUNHO",
@@ -184,7 +184,10 @@ class GerenciadorPastas:
         for tentativa in range(1, 4):
             try:
                 destino.parent.mkdir(parents=True, exist_ok=True)
-                os.rename(origem, destino)
+                if origem.is_dir():
+                    os.rename(origem, destino)  # pasta: o destino foi conferido acima
+                else:
+                    renomear_sem_sobrescrever(origem, destino)
                 self.log.info("Movido: %s -> %s", origem, destino)
                 return 1
             except FileExistsError:

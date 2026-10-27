@@ -1,0 +1,30 @@
+# Uma execução do RPA (disparada pelo rpa-nf.timer).
+# Código de saída: 0 ok | 1 terminou com falhas | 2 erro fatal | 3 outra execução em andamento.
+[Unit]
+Description=RPA NF Espiao - baixa os DANFEs para NOTAS FISCAIS
+Requires=rpa-nf-onedrive.service
+After=rpa-nf-onedrive.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=rpa-nf
+Group=rpa-nf
+WorkingDirectory=/opt/rpa-nf
+Environment=HOME=/home/rpa-nf
+Environment=PLAYWRIGHT_BROWSERS_PATH=/opt/rpa-nf/ms-playwright
+# APELIDOS_FONTE: caminho da lista de apelidos mantida por outro serviço da máquina (só na VPS).
+EnvironmentFile=-/etc/default/rpa-nf
+# A lista pode ser legível só pelo dono; o root copia antes de cada execução.
+# "-": se a cópia falhar (ou APELIDOS_FONTE não existir), o RPA usa a última cópia local.
+ExecStartPre=-+/usr/bin/install -o root -g rpa-nf -m 640 ${APELIDOS_FONTE} /home/rpa-nf/apelidos-fonte.md
+# Sem o OneDrive montado, não roda (gravaria numa pasta local vazia).
+ExecStartPre=/usr/bin/mountpoint -q /home/rpa-nf/notas
+ExecStart=/opt/rpa-nf/venv/bin/python -m rpa_nf_esp
+SuccessExitStatus=3
+TimeoutStartSec=30min
+UMask=0077
+Nice=5
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=full

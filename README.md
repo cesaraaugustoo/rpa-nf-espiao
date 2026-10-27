@@ -96,7 +96,7 @@ Detalhes de projeto, máquina de estados e particularidades do site: [docs/arqui
 
 ## Requisitos
 
-- Windows 10/11
+- Windows 10/11, ou Linux num servidor (veja [deploy/vps/](deploy/vps/README.md))
 - Python 3.12 ou superior (testado em 3.12, 3.13 e 3.14)
 - Acesso ao Espião NF-e com as empresas cadastradas
 - Pasta de notas fiscais (por exemplo, no OneDrive)
@@ -158,6 +158,8 @@ EXECUTAR_AGORA.bat --pendencias            # notas em aberto e desistidas
 EXECUTAR_AGORA.bat --reprocessar <chave>   # devolve uma nota para a fila
 EXECUTAR_AGORA.bat --conferir              # conferência Espião x pastas (29 dias)
 EXECUTAR_AGORA.bat --detalhado             # log técnico, para depuração
+EXECUTAR_AGORA.bat --testar-email          # e-mail de teste (alertas, ALERTA_* no .env)
+EXECUTAR_AGORA.bat --resumo-do-dia         # envia agora o resumo do dia por e-mail
 ```
 
 Códigos de saída: `0` ok · `1` terminou com falhas · `2` erro fatal (senha, configuração) ·
@@ -176,7 +178,12 @@ powershell -ExecutionPolicy Bypass -File scripts\agendar_tarefa.ps1 -Remover
 ```
 
 A tarefa roda com `pythonw` (sem janela), ignora disparos enquanto a anterior ainda roda e, se o
-computador estava desligado no horário, executa quando ele ligar.
+computador estava desligado no horário, executa quando ele ligar. Se estava suspenso, o Windows
+o acorda no horário (só na tomada).
+
+**Em servidor (VPS Linux):** para não depender do PC ligado nem do usuário logado, o RPA roda
+pelo systemd e grava direto no OneDrive (rclone). Instalação, troca do PC para a VPS e volta:
+[deploy/vps/README.md](deploy/vps/README.md). Só um dos dois pode estar agendado por vez.
 
 ## Logs, pendências e conferência
 
@@ -211,6 +218,7 @@ rpa-nf-espiao/
 │   └── logs.py          # log TXT diário
 ├── config/              # modelos de configuração (os reais não são versionados)
 ├── scripts/             # instalação e agendamento (PowerShell)
+├── deploy/vps/          # serviços systemd e guia para rodar numa VPS Linux
 ├── tests/               # testes automatizados (dados 100% fictícios)
 ├── docs/                # arquitetura e operação
 └── EXECUTAR_AGORA.bat   # execução manual
@@ -225,7 +233,7 @@ rpa-nf-espiao/
 Os testes cobrem as regras de negócio: dígitos verificadores, apelidos, padrão de nome e
 sequência, gravação sem sobrescrever, virada de mês e de ano, conflitos de pasta, falhas do
 OneDrive, chave citada de outra nota, retentativas, "Sem XML" e site fora do ar (com um Espião
-simulado). Rodam no GitHub Actions em Windows com Python 3.12, 3.13 e 3.14. **Todos os CNPJs e
+simulado). Rodam no GitHub Actions em Windows e Linux com Python 3.12, 3.13 e 3.14. **Todos os CNPJs e
 chaves de acesso dos testes são fictícios**, gerados com dígito verificador válido.
 
 ## Segurança e dados sensíveis

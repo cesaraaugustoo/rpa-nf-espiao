@@ -357,12 +357,16 @@ class EspiaoNFe:
 
     # ----------------------------------------------------------------- tabela
 
+    def _na_tela(self, seletor: str) -> Locator:
+        """Só elementos visíveis: a janela do "Investigar XML", depois de fechada, continua
+        escondida na página com uma tabela e uma paginação próprias."""
+        return self.page.locator(seletor).filter(visible=True)
+
     def _paginacao(self) -> Locator:
-        return self.page.locator(".MuiTablePagination-displayedRows")
+        return self._na_tela(".MuiTablePagination-displayedRows")
 
     def _aguardar_tabela(self, total_esperado: int) -> None:
-        pg = self.page
-        pg.locator("tbody tr").first.wait_for(state="visible")
+        self._na_tela("tbody tr").first.wait_for(state="visible")
         self._linhas_por_pagina(100)
         try:
             expect(self._paginacao()).to_have_text(re.compile(rf"de {total_esperado}\s*$"), timeout=10000)
@@ -373,7 +377,7 @@ class EspiaoNFe:
             )
 
     def _linhas_por_pagina(self, quantidade: int) -> None:
-        seletor = self.page.locator(".MuiTablePagination-select")
+        seletor = self._na_tela(".MuiTablePagination-select")
         if not seletor.count() or seletor.inner_text().strip() == str(quantidade):
             return
         seletor.click()
@@ -383,7 +387,7 @@ class EspiaoNFe:
         expect(seletor).to_have_text(str(quantidade))
 
     def _ir_primeira_pagina(self) -> None:
-        anterior = self.page.locator("button[aria-label='Ir para a página anterior']")
+        anterior = self._na_tela("button[aria-label='Ir para a página anterior']")
         while anterior.count() and anterior.is_enabled():
             texto = self._paginacao().inner_text()
             anterior.click()
@@ -392,10 +396,10 @@ class EspiaoNFe:
     def _localizar_linha(self, chave: str) -> Locator:
         self._ir_primeira_pagina()
         while True:
-            linha = self.page.locator("tbody tr").filter(has_text=chave)
+            linha = self._na_tela("tbody tr").filter(has_text=chave)
             if linha.count():
                 return linha.first
-            proxima = self.page.locator("button[aria-label='Ir para a próxima página']")
+            proxima = self._na_tela("button[aria-label='Ir para a próxima página']")
             if not proxima.count() or proxima.is_disabled():
                 raise ErroEspiao(f"linha da nota {chave} não encontrada na tabela")
             texto = self._paginacao().inner_text()
@@ -404,14 +408,13 @@ class EspiaoNFe:
 
     def _ler_tabela(self) -> list[NotaEspiao]:
         """Plano B: lê as notas direto da tabela, achando as colunas pelo texto do cabeçalho."""
-        pg = self.page
         try:
-            pg.locator("tbody tr").first.wait_for(state="visible", timeout=10000)
+            self._na_tela("tbody tr").first.wait_for(state="visible", timeout=10000)
         except TempoEsgotado:
             self.log.warning("Nenhuma linha apareceu na tabela; considerando a pesquisa vazia")
             return []
         self._linhas_por_pagina(100)
-        cabecalhos = [re.sub(r"\d+$", "", t).strip().lower() for t in pg.locator("thead th").all_inner_texts()]
+        cabecalhos = [re.sub(r"\d+$", "", t).strip().lower() for t in self._na_tela("thead th").all_inner_texts()]
 
         def coluna(prefixo: str) -> int:
             for i, t in enumerate(cabecalhos):
@@ -426,7 +429,7 @@ class EspiaoNFe:
         notas: list[NotaEspiao] = []
         self._ir_primeira_pagina()
         while True:
-            for linha in pg.locator("tbody tr").all():
+            for linha in self._na_tela("tbody tr").all():
                 celulas = linha.locator("td").all_inner_texts()
                 chave = so_digitos(celulas[i_chave])
                 if not chave_valida(chave):
@@ -444,7 +447,7 @@ class EspiaoNFe:
                     valor=None,
                     tem_xml=linha.locator("a[aria-label='Download']").count() > 0,
                 ))
-            proxima = pg.locator("button[aria-label='Ir para a próxima página']")
+            proxima = self._na_tela("button[aria-label='Ir para a próxima página']")
             if not proxima.count() or proxima.is_disabled():
                 return notas
             texto = self._paginacao().inner_text()

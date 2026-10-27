@@ -140,6 +140,21 @@ class Ledger:
                 (_agora(), situacao, json.dumps(resumo, ensure_ascii=False), self.execucao_id),
             )
 
+    def _execucoes(self, onde: str, parametros: tuple, ordem: str, limite: int = -1) -> list[dict]:
+        linhas = self._con.execute(
+            f"SELECT id, inicio, fim, situacao, resumo FROM execucoes WHERE ensaio = 0 AND {onde} "
+            f"ORDER BY id {ordem} LIMIT ?", (*parametros, limite),
+        ).fetchall()
+        return [{**dict(l), "resumo": json.loads(l["resumo"]) if l["resumo"] else None} for l in linhas]
+
+    def execucoes_anteriores(self, limite: int) -> list[dict]:
+        """Execuções reais já finalizadas antes da atual, da mais recente para a mais antiga."""
+        return self._execucoes("fim IS NOT NULL AND id < ?", (self.execucao_id or 1 << 62,), "DESC", limite)
+
+    def execucoes_do_dia(self, dia: date) -> list[dict]:
+        """Execuções reais iniciadas no dia, em ordem (as interrompidas têm situacao None)."""
+        return self._execucoes("inicio LIKE ?", (f"{dia.isoformat()}%",), "ASC")
+
     # ---------------------------------------------------------------------- notas
 
     @staticmethod

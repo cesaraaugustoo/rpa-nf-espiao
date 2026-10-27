@@ -1,6 +1,8 @@
 # Cadastra o RPA no Agendador de Tarefas do Windows: de hora em hora, das 07:00 as 20:00.
 # Roda com pythonw (sem janela piscando). Se o PC estiver desligado no horario, roda quando ligar.
 # Se uma execucao ainda estiver em andamento, a seguinte e ignorada.
+# Se o PC estiver suspenso, o Windows o acorda no horario, mas so na tomada: o script ativa os
+# despertadores do plano de energia apenas para "conectado" (na bateria, espera o PC acordar).
 #
 # Por padrao roda MESMO COM O USUARIO DESLOGADO, sem guardar senha (modo S4U do Windows).
 # O S4U nao acessa pastas de rede do Windows; o RPA nao precisa: usa internet e o disco local.
@@ -47,6 +49,7 @@ $config = New-ScheduledTaskSettingsSet `
     -MultipleInstances IgnoreNew `
     -ExecutionTimeLimit (New-TimeSpan -Minutes 30) `
     -StartWhenAvailable `
+    -WakeToRun `
     -AllowStartIfOnBatteries `
     -DontStopIfGoingOnBatteries
 $admin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole(
@@ -72,6 +75,10 @@ if ($ComSenha) {
         -Description $descricao -Force | Out-Null
     $modo = if ($SoLogado) { "so com o usuario logado" } else { "mesmo com o usuario deslogado, sem senha (S4U)" }
 }
+
+# Despertadores: 1 = ativar, so na tomada (AC); a configuracao da bateria (DC) nao e alterada.
+powercfg /setacvalueindex SCHEME_CURRENT SUB_SLEEP RTCWAKE 1
+powercfg /setactive SCHEME_CURRENT
 
 $t = Get-ScheduledTask -TaskName $Nome
 $info = Get-ScheduledTaskInfo -TaskName $Nome

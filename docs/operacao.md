@@ -18,6 +18,20 @@ O RPA roda sozinho de hora em hora. No dia a dia, basta:
 
 2. **Uma vez por semana**, rodar a conferência: `EXECUTAR_AGORA.bat --conferir`.
 
+## Alertas por e-mail
+
+Com `ALERTA_*` preenchido no `.env`, o RPA manda e-mail (pelo Gmail) só quando algo pede ação:
+
+| E-mail | Quando | Ação |
+|---|---|---|
+| `ATENÇÃO: baixar à mão (LOJA)` | uma nota foi desistida | baixar a nota no Espião |
+| `ATENÇÃO: pesquisa falhando (LOJA)` | 3ª execução seguida sem conseguir pesquisar a empresa (um e-mail por sequência) | conferir o Espião; se persistir, ver o log |
+| `ATENÇÃO: RPA parado por erro` | erro fatal (senha, configuração); só na 1ª execução da sequência | corrigir o `.env` ou a configuração |
+| `Resumo de DD/MM/AAAA` | todo dia às 20h20 (VPS) | nenhuma; **se não chegar, algo parou** |
+
+Falha isolada de download não gera e-mail (é retentada sozinha) e aparece no resumo do dia.
+`--testar-email` envia uma mensagem de teste; `--resumo-do-dia` envia o resumo na hora.
+
 ## O que cada mensagem significa
 
 | No log | Significado | Ação |

@@ -17,7 +17,13 @@ from rpa_nf_esp.config import RAIZ_PROJETO, Empresa
 from rpa_nf_esp.documentos import ChaveAcesso, chave_valida, cnpj_valido
 from rpa_nf_esp.espiao import decodificar_resposta, nota_da_api
 from rpa_nf_esp.ledger import DadosNota, Ledger, Status
-from rpa_nf_esp.nomes import base_nome, gravar_sem_sobrescrever, limpar_para_arquivo, proximo_nome
+from rpa_nf_esp.nomes import (
+    base_nome,
+    gravar_sem_sobrescrever,
+    limpar_para_arquivo,
+    proximo_nome,
+    renomear_sem_sobrescrever,
+)
 from rpa_nf_esp.pastas import GerenciadorPastas, interpretar_pasta_mes
 from rpa_nf_esp.pdf import PdfInvalido, chaves_proprias, validar_danfe
 
@@ -99,6 +105,17 @@ def test_gravacao_nunca_sobrescreve(tmp_path: Path):
     assert destino.name == "ACME 231026 2_RPA.pdf"
     assert (pasta / "ACME 231026_RPA.pdf").read_bytes() == b"antigo"
     assert not list(pasta.glob(".~rpa-*"))
+
+
+def test_renomear_recusa_destino_existente(tmp_path: Path):
+    # No Linux (VPS) o rename comum substituiria o destino sem avisar.
+    origem, destino = tmp_path / "novo.pdf", tmp_path / "ACME 231026_RPA.pdf"
+    origem.write_bytes(b"novo")
+    destino.write_bytes(b"antigo")
+    with pytest.raises(FileExistsError):
+        renomear_sem_sobrescrever(origem, destino)
+    assert destino.read_bytes() == b"antigo"
+    assert origem.read_bytes() == b"novo"
 
 
 def test_temporario_nao_fica_na_pasta_se_a_copia_falhar(tmp_path: Path, monkeypatch):

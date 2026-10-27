@@ -1,0 +1,11 @@
+# Todo dia às 20:20, depois do último ciclo (20:00).
+# Sem Persistent de propósito: se a VPS estiver fora nesse horário, o e-mail não chega,
+# e a falta dele é o aviso de que algo parou.
+[Unit]
+Description=RPA NF Espiao - resumo do dia por e-mail, 20h20
+
+[Timer]
+OnCalendar=*-*-* 20:20:00
+
+[Install]
+WantedBy=timers.target

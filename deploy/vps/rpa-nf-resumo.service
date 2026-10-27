@@ -1,0 +1,18 @@
+# Resumo do dia por e-mail (disparado pelo rpa-nf-resumo.timer). Só lê o banco de controle.
+[Unit]
+Description=RPA NF Espiao - resumo do dia por e-mail
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=rpa-nf
+Group=rpa-nf
+WorkingDirectory=/opt/rpa-nf
+Environment=HOME=/home/rpa-nf
+ExecStart=/opt/rpa-nf/venv/bin/python -m rpa_nf_esp --resumo-do-dia
+TimeoutStartSec=5min
+UMask=0077
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=full

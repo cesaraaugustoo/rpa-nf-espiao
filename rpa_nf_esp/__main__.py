@@ -7,12 +7,14 @@
     python -m rpa_nf_esp --somente-pastas   só a virada de mês/ano das pastas
     python -m rpa_nf_esp --pendencias       lista notas em aberto e desistidas
     python -m rpa_nf_esp --reprocessar <chave>
+    python -m rpa_nf_esp --resumo-do-dia    envia por e-mail o resumo das execuções de hoje
+    python -m rpa_nf_esp --testar-email     envia um e-mail de teste (confere ALERTA_* no .env)
 
 Códigos de saída: 0 tudo certo | 1 terminou com falhas | 2 erro fatal | 3 já havia outra execução rodando.
 """
 
 import argparse
-import msvcrt
+import ctypes
 import sys
 import time
 from dataclasses import replace
@@ -23,11 +25,19 @@ from . import __version__
 from . import apelidos as mod_apelidos
 from . import config as mod_config
 from . import logs
+from .alertas import EXECUCOES_SEGUIDAS_COM_ERRO, Alertas, alerta_da_execucao, resumo_do_dia
 from .conferencia import Conferencia
 from .documentos import formatar_cnpj, so_digitos
 from .espiao import CredenciaisRecusadas, resumir_erro
 from .executor import Executor, resumo_para_json, resumo_para_log
 from .ledger import EM_ABERTO, Ledger, Status
+
+try:
+    import msvcrt
+except ImportError:  # Linux (VPS)
+    import fcntl
+
+    msvcrt = None
 
 SAIDA_OK, SAIDA_FALHAS, SAIDA_FATAL, SAIDA_OCUPADO = 0, 1, 2, 3
 
@@ -44,7 +54,10 @@ class TravaExecucao:
         self._arquivo = open(self.caminho, "a+")
         self._arquivo.seek(0)  # trava e destrava sempre o mesmo byte (posição 0)
         try:
-            msvcrt.locking(self._arquivo.fileno(), msvcrt.LK_NBLCK, 1)
+            if msvcrt:
+                msvcrt.locking(self._arquivo.fileno(), msvcrt.LK_NBLCK, 1)
+            else:
+                fcntl.flock(self._arquivo.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
         except OSError:
             self._arquivo.close()
             raise BlockingIOError(f"outra execução está em andamento (trava: {self.caminho})") from None
@@ -53,9 +66,35 @@ class TravaExecucao:
     def __exit__(self, *exc) -> None:
         try:
             self._arquivo.seek(0)
-            msvcrt.locking(self._arquivo.fileno(), msvcrt.LK_UNLCK, 1)
+            if msvcrt:
+                msvcrt.locking(self._arquivo.fileno(), msvcrt.LK_UNLCK, 1)
+            else:
+                fcntl.flock(self._arquivo.fileno(), fcntl.LOCK_UN)
         finally:
             self._arquivo.close()
+
+
+class MantemAcordado:
+    """Impede o Windows de suspender o PC no meio do ciclo.
+
+    Acordado pelo Agendador, o Windows volta a dormir após ~2 min sem uso, o que cortaria a execução.
+    A tela pode apagar normalmente; o pedido vale só para esta thread e é desfeito ao sair.
+    Fora do Windows (VPS) não faz nada: servidor não suspende.
+    """
+
+    _CONTINUOUS, _SYSTEM_REQUIRED = 0x80000000, 0x00000001
+
+    def __init__(self):
+        self._kernel32 = ctypes.windll.kernel32 if hasattr(ctypes, "windll") else None
+
+    def __enter__(self) -> "MantemAcordado":
+        if self._kernel32:
+            self._kernel32.SetThreadExecutionState(self._CONTINUOUS | self._SYSTEM_REQUIRED)
+        return self
+
+    def __exit__(self, *exc) -> None:
+        if self._kernel32:
+            self._kernel32.SetThreadExecutionState(self._CONTINUOUS)
 
 
 def _argumentos(argv: list[str] | None) -> argparse.Namespace:
@@ -68,6 +107,8 @@ def _argumentos(argv: list[str] | None) -> argparse.Namespace:
     p.add_argument("--reprocessar", metavar="CHAVE", help="devolve uma nota para a fila de tentativas e sai")
     p.add_argument("--conferir", nargs="?", const=29, type=int, metavar="DIAS",
                    help="confere Espião x pastas nos últimos DIAS (padrão e máximo 29), sem baixar nada")
+    p.add_argument("--resumo-do-dia", action="store_true", help="envia por e-mail o resumo das execuções de hoje e sai")
+    p.add_argument("--testar-email", action="store_true", help="envia um e-mail de teste e sai")
     p.add_argument("--hoje", metavar="AAAA-MM-DD", help="simula outra data (só junto com --ensaio --somente-pastas)")
     p.add_argument("--detalhado", action="store_true", help="log em nível de depuração")
     p.add_argument("--config", type=Path, help="caminho alternativo do config.toml")
@@ -105,7 +146,17 @@ def principal(argv: list[str] | None = None) -> int:
 
     log = logs.configurar(cfg.dir_logs, cfg.dias_manter_logs, args.detalhado)
     ledger = Ledger(cfg.dir_dados / "rpa.sqlite3")
+    alertas = Alertas(log)
     try:
+        if args.testar_email:
+            enviado = alertas.enviar("e-mail de teste", "Se você recebeu esta mensagem, os alertas do RPA estão funcionando.")
+            return SAIDA_OK if enviado else SAIDA_FALHAS
+        if args.resumo_do_dia:
+            dia = date.today()
+            assunto, corpo = resumo_do_dia(dia, ledger.execucoes_do_dia(dia), ledger.listar(EM_ABERTO),
+                                           {e.cnpj: e.pasta for e in cfg.empresas})
+            log.info("Resumo do dia: %s", assunto)
+            return SAIDA_OK if alertas.enviar(assunto, corpo) else SAIDA_FALHAS
         if args.pendencias:
             _listar_pendencias(ledger, cfg)
             return SAIDA_OK
@@ -125,10 +176,10 @@ def principal(argv: list[str] | None = None) -> int:
                 return SAIDA_FATAL
         hoje = date.fromisoformat(args.hoje) if args.hoje else date.today()
 
-        with TravaExecucao(cfg.dir_dados / "rpa.lock"):
+        with TravaExecucao(cfg.dir_dados / "rpa.lock"), MantemAcordado():
             if args.conferir is not None:
                 return _conferir(cfg, log, ledger, empresas, hoje, args.conferir)
-            return _executar(cfg, log, ledger, args, empresas, hoje)
+            return _executar(cfg, log, ledger, args, empresas, hoje, alertas)
     except BlockingIOError as e:
         log.warning("Execução ignorada: %s", e)
         return SAIDA_OCUPADO
@@ -150,7 +201,20 @@ def _conferir(cfg, log, ledger, empresas, hoje, dias) -> int:
     return SAIDA_OK if ok else SAIDA_FALHAS
 
 
-def _executar(cfg, log, ledger, args, empresas, hoje) -> int:
+def _alertar(log, ledger, alertas, args, situacao: str, erro: str | None, resumo: dict) -> None:
+    """Manda e-mail se a execução que acabou pede ação. Nunca interrompe o RPA."""
+    if args.ensaio or args.somente_pastas:
+        return
+    try:
+        alerta = alerta_da_execucao(situacao, erro, resumo.get("empresas", []),
+                                    ledger.execucoes_anteriores(EXECUCOES_SEGUIDAS_COM_ERRO))
+        if alerta:
+            alertas.enviar(*alerta)
+    except Exception as e:
+        log.warning("Falha ao preparar o alerta por e-mail: %s", resumir_erro(e))
+
+
+def _executar(cfg, log, ledger, args, empresas, hoje, alertas) -> int:
     inicio = time.monotonic()
     execucao = ledger.iniciar_execucao(args.ensaio)
     log.info("=" * 70)
@@ -164,10 +228,12 @@ def _executar(cfg, log, ledger, args, empresas, hoje) -> int:
     except mod_config.ErroConfiguracao as e:
         log.critical("Erro de configuração: %s", e)
         ledger.finalizar_execucao("FATAL", {"erro": str(e)})
+        _alertar(log, ledger, alertas, args, "FATAL", f"Erro de configuração: {e}", {})
         return SAIDA_FATAL
     except CredenciaisRecusadas as e:
         log.critical("%s. Confira ESPIAO_USUARIO/ESPIAO_SENHA no .env", e)
         ledger.finalizar_execucao("FATAL", {"erro": str(e)})
+        _alertar(log, ledger, alertas, args, "FATAL", f"{e}. Confira ESPIAO_USUARIO/ESPIAO_SENHA no .env", {})
         return SAIDA_FATAL
     except KeyboardInterrupt:
         log.warning("Execução interrompida pelo usuário")
@@ -176,12 +242,14 @@ def _executar(cfg, log, ledger, args, empresas, hoje) -> int:
     except Exception as e:
         log.exception("Erro fatal: %s", e)
         ledger.finalizar_execucao("FATAL", {"erro": str(e)})
+        _alertar(log, ledger, alertas, args, "FATAL", f"Erro fatal: {resumir_erro(e)}", {})
         return SAIDA_FATAL
 
     for linha in resumo_para_log(resumos):
         log.info(linha)
     situacao = "OK" if all(r.ok for r in resumos) else "COM FALHAS"
     ledger.finalizar_execucao(situacao, resumo_para_json(resumos))
+    _alertar(log, ledger, alertas, args, situacao, None, resumo_para_json(resumos))
     log.info("EXECUÇÃO #%d concluída em %.0fs - %s", execucao, time.monotonic() - inicio, situacao)
     return SAIDA_OK if situacao == "OK" else SAIDA_FALHAS
 

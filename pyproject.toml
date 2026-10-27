@@ -1,6 +1,6 @@
 [project]
 name = "rpa-nf-espiao"
-version = "1.2.0"
+version = "1.3.0"
 description = "RPA que baixa os DANFEs do Espião NF-e e os organiza nas pastas de notas fiscais, sem duplicidade."
 readme = "README.md"
 requires-python = ">=3.12"

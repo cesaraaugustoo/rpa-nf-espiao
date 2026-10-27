@@ -3,6 +3,27 @@
 Formato baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/); versões seguem
 [SemVer](https://semver.org/lang/pt-BR/).
 
+## [1.3.0] - 2026-10-27
+
+### Adicionado
+
+- Alertas por e-mail (Gmail): nota desistida, pesquisa de uma empresa falhando 3 execuções
+  seguidas, erro fatal, e resumo do dia às 20h20. Sem repetir o mesmo alerta a cada hora.
+  Comandos `--testar-email` e `--resumo-do-dia`.
+- Execução em VPS Linux (`deploy/vps/`): serviços systemd de hora em hora, OneDrive montado
+  com rclone, usuário dedicado sem privilégios. Resolve PC desligado, suspenso ou deslogado.
+- PC suspenso: a tarefa agendada acorda o computador no horário do ciclo (só na tomada) e o RPA
+  impede o Windows de voltar a dormir no meio da execução.
+- Testes automáticos também no Linux (GitHub Actions).
+
+### Corrigido
+
+- Investigar XML falhava na 2ª nota "Sem XML" da mesma empresa no mesmo ciclo: a janela
+  fechada continua escondida na página com uma paginação própria. A tabela agora é lida só
+  pelo que está visível.
+- No Linux, gravar e mover arquivos nunca sobrescreve um existente (o `rename` do Linux
+  substitui o destino sem avisar; o nome passa a ser reservado antes).
+
 ## [1.2.0] - 2026-10-26
 
 ### Adicionado

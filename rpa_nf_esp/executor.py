@@ -28,6 +28,7 @@ class ResumoEmpresa:
     canceladas: int = 0
     erro_geral: str | None = None
     arquivos: list[str] = field(default_factory=list)
+    desistencias: list[str] = field(default_factory=list)  # "NF ... - motivo", para o alerta por e-mail
 
     @property
     def ok(self) -> bool:
@@ -299,6 +300,7 @@ class Executor:
             if not self.ensaio:
                 self.ledger.marcar(_dados(nota, empresa), Status.DESISTIDA, erro=motivo)
             resumo.desistidas += 1
+            resumo.desistencias.append(f"{rotulo} - {motivo}")
             return
         self.log.info("Sem XML no Espião (só o resumo da SEFAZ): %s", rotulo)
         if not self.ensaio:
@@ -318,6 +320,7 @@ class Executor:
     def _encerrar(self, registro, motivo: str, resumo: ResumoEmpresa) -> None:
         rotulo = f"NF {registro.numero} de {registro.emissao:%d/%m/%Y} - {registro.emitente_nome}"
         resumo.desistidas += 1
+        resumo.desistencias.append(f"{rotulo} - {motivo}")
         self.log.error("DESISTIDA: %s - %s. Baixar manualmente.", rotulo, motivo)
         if not self.ensaio:
             self.ledger.encerrar(registro.chave, motivo)
@@ -334,6 +337,7 @@ class Executor:
     def _contabilizar_falha(self, registro, rotulo: str, motivo: str, resumo: ResumoEmpresa) -> None:
         if registro.status == Status.DESISTIDA:
             resumo.desistidas += 1
+            resumo.desistencias.append(f"{rotulo} - {motivo} (após {registro.falhas} tentativas)")
             self.log.error("DESISTIDA após %d tentativas: %s - %s. Baixar manualmente.",
                            registro.falhas, rotulo, motivo)
         else:

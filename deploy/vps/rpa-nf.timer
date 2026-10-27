@@ -1,0 +1,11 @@
+# De hora em hora, das 07:00 às 20:00 (fuso America/Sao_Paulo da VPS).
+# Persistent: se a VPS estiver fora no horário, roda assim que voltar.
+[Unit]
+Description=RPA NF Espiao - de hora em hora, 07h-20h
+
+[Timer]
+OnCalendar=*-*-* 07..20:00:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target

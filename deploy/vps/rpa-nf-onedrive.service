@@ -1,0 +1,25 @@
+# Pasta NOTAS FISCAIS do OneDrive montada em /home/rpa-nf/notas para o RPA (rclone mount).
+# O RPA lê e grava ali como numa pasta local; o rclone sobe as mudanças para o OneDrive.
+[Unit]
+Description=OneDrive NOTAS FISCAIS montado para o RPA (rclone)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=notify
+User=rpa-nf
+Group=rpa-nf
+Environment=HOME=/home/rpa-nf
+ExecStartPre=/usr/bin/mkdir -p /home/rpa-nf/notas
+# --vfs-case-insensitive: o OneDrive não diferencia maiúsculas; o Linux sim.
+# --poll-interval: arquivos salvos à mão em outro computador aparecem em ~1 min.
+ExecStart=/opt/rpa-nf/bin/rclone mount "rpa-onedrive:NOTAS FISCAIS" /home/rpa-nf/notas \
+    --vfs-cache-mode full --vfs-cache-max-size 2G --vfs-cache-max-age 72h \
+    --vfs-case-insensitive --dir-cache-time 5m --poll-interval 1m \
+    --umask 077 --log-level NOTICE
+ExecStop=/bin/fusermount3 -uz /home/rpa-nf/notas
+Restart=on-failure
+RestartSec=30
+
+[Install]
+WantedBy=multi-user.target

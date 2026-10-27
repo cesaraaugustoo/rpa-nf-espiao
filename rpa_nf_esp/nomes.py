@@ -58,12 +58,32 @@ def proximo_nome(pasta: Path, base: str, sufixo: str) -> str:
     return f"{base} {max(usados) + 1}{sufixo}.pdf"
 
 
+def renomear_sem_sobrescrever(origem: Path, destino: Path) -> None:
+    """Renomeia `origem` para `destino`; FileExistsError se o destino já existir.
+
+    No Windows o próprio rename já recusa destino existente. No Linux o rename substitui
+    o destino sem avisar, então o nome é reservado antes com uma criação exclusiva
+    (que falha se o arquivo existir) e só então o conteúdo toma o lugar da reserva.
+    Não usa link físico: a pasta do OneDrive na VPS (rclone mount) não o suporta.
+    """
+    if os.name == "nt":
+        os.rename(origem, destino)
+        return
+    with open(destino, "xb"):
+        pass
+    try:
+        os.replace(origem, destino)
+    except BaseException:
+        destino.unlink(missing_ok=True)
+        raise
+
+
 def gravar_sem_sobrescrever(origem: Path, pasta: Path, base: str, sufixo: str) -> Path:
     """Copia `origem` para `pasta` com o próximo nome livre. Nunca sobrescreve um arquivo.
 
-    A cópia vai primeiro para um temporário na própria pasta e depois é renomeada:
-    no Windows o rename falha se o destino existir, o que fecha a janela de corrida
-    com alguém salvando um arquivo de mesmo nome ao mesmo tempo.
+    A cópia vai primeiro para um temporário na própria pasta e depois é renomeada sem
+    sobrescrever, o que fecha a janela de corrida com alguém salvando um arquivo de
+    mesmo nome ao mesmo tempo.
     """
     pasta.mkdir(parents=True, exist_ok=True)
     temporario = pasta / f".~rpa-{uuid.uuid4().hex}.part"
@@ -72,7 +92,7 @@ def gravar_sem_sobrescrever(origem: Path, pasta: Path, base: str, sufixo: str) -
         for _ in range(20):
             destino = pasta / proximo_nome(pasta, base, sufixo)
             try:
-                os.rename(temporario, destino)
+                renomear_sem_sobrescrever(temporario, destino)
                 return destino
             except FileExistsError:
                 continue
