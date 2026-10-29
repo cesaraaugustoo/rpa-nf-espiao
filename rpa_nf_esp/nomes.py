@@ -4,6 +4,7 @@ Padrão: "APELIDO DDMMAA_RPA.pdf"; a 2ª, 3ª... nota do mesmo fornecedor no mes
 ganha " 2", " 3" antes do sufixo: "ACME 231026 2_RPA.pdf".
 A contagem considera também os arquivos salvos à mão (sem "_RPA"), e compara sem acento
 e sem caixa: "CAFE BOM 221026.pdf" conta como a 1ª nota de "CAFÉ BOM 221026".
+O XML da nota fica ao lado do PDF, com o mesmo nome: "ACME 231026 2_RPA.xml".
 """
 
 import os
@@ -98,10 +99,27 @@ def gravar_sem_sobrescrever(origem: Path, pasta: Path, base: str, sufixo: str) -
                 continue
         raise OSError(f"não foi possível achar um nome livre para {base!r} em {pasta}")
     finally:
-        # Nunca deixa o temporário na pasta de notas, nem deixa a limpeza esconder o erro original.
-        for _ in range(3):
-            try:
-                temporario.unlink(missing_ok=True)
-                break
-            except OSError:
-                time.sleep(1)
+        _apagar_temporario(temporario)
+
+
+def gravar_ao_lado(origem: Path, irmao: Path, extensao: str) -> Path:
+    """Copia `origem` para a pasta de `irmao`, com o mesmo nome e outra extensão
+    ("ACME 231026_RPA.pdf" -> "ACME 231026_RPA.xml"). FileExistsError se o destino já existir."""
+    destino = irmao.with_suffix(extensao)
+    temporario = irmao.parent / f".~rpa-{uuid.uuid4().hex}.part"
+    try:
+        shutil.copyfile(origem, temporario)
+        renomear_sem_sobrescrever(temporario, destino)
+        return destino
+    finally:
+        _apagar_temporario(temporario)
+
+
+def _apagar_temporario(temporario: Path) -> None:
+    # Nunca deixa o temporário na pasta de notas, nem deixa a limpeza esconder o erro original.
+    for _ in range(3):
+        try:
+            temporario.unlink(missing_ok=True)
+            break
+        except OSError:
+            time.sleep(1)

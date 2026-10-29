@@ -11,6 +11,12 @@ Ciclo de vida de uma nota (coluna status):
     JA_EXISTIA      o PDF já estava na pasta (baixado à mão)     (final)
     CANCELADA       NF cancelada na SEFAZ, ignorada              (final)
     DESISTIDA       esgotou as tentativas; precisa de ação manual (final, reversível com --reprocessar)
+
+XML de uma nota BAIXADA (salvo ao lado do PDF, com o mesmo nome), coluna xml:
+
+    NULL            ainda não salvo; tentado de novo nas próximas execuções (xml_falhas conta as falhas)
+    caminho         salvo
+    ''              desistido (tentativas esgotadas ou PDF não encontrado; motivo em xml_erro)
 """
 
 import json
@@ -77,6 +83,9 @@ CREATE TABLE IF NOT EXISTS indice_pdf_v2 (
 );
 """
 
+# Colunas acrescentadas depois da v1.3.0: criadas no banco existente na primeira abertura.
+_COLUNAS_NOTAS = {"xml": "TEXT", "xml_falhas": "INTEGER NOT NULL DEFAULT 0", "xml_erro": "TEXT"}
+
 
 @dataclass(frozen=True)
 class RegistroNota:
@@ -90,6 +99,7 @@ class RegistroNota:
     falhas: int
     ultimo_erro: str | None
     arquivo: str | None
+    xml: str | None = None
 
 
 @dataclass(frozen=True)
@@ -118,6 +128,11 @@ class Ledger:
         self._con.row_factory = sqlite3.Row
         self._con.execute("PRAGMA journal_mode=WAL")
         self._con.executescript(_SCHEMA)
+        existentes = {l["name"] for l in self._con.execute("PRAGMA table_info(notas)")}
+        with self._con:
+            for nome, tipo in _COLUNAS_NOTAS.items():
+                if nome not in existentes:
+                    self._con.execute(f"ALTER TABLE notas ADD COLUMN {nome} {tipo}")
         self.execucao_id: int | None = None
 
     def fechar(self) -> None:
@@ -170,6 +185,7 @@ class Ledger:
             falhas=linha["falhas"],
             ultimo_erro=linha["ultimo_erro"],
             arquivo=linha["arquivo"],
+            xml=linha["xml"],
         )
 
     def obter(self, chave: str) -> RegistroNota | None:
@@ -254,6 +270,31 @@ class Ledger:
                 (Status.PENDENTE.value, _agora(), chave),
             )
         return cur.rowcount > 0
+
+    # -------------------------------------------------------------------- XML
+
+    def xml_pendentes(self, empresa_cnpj: str, desde: date) -> list[RegistroNota]:
+        """Notas baixadas pelo RPA, emitidas a partir de `desde`, cujo XML ainda não foi salvo."""
+        sql = ("SELECT * FROM notas WHERE status = ? AND xml IS NULL AND empresa_cnpj = ? AND emissao >= ? "
+               "ORDER BY emissao")
+        params = (Status.BAIXADA.value, empresa_cnpj, desde.isoformat())
+        return [self._registro(l) for l in self._con.execute(sql, params)]
+
+    def marcar_xml(self, chave: str, caminho: str) -> None:
+        self._atualizar_xml(chave, "xml = ?, xml_erro = NULL", (caminho,))
+
+    def registrar_falha_xml(self, chave: str, motivo: str) -> int:
+        """Conta uma tentativa malsucedida de baixar o XML e devolve o total de falhas."""
+        self._atualizar_xml(chave, "xml_falhas = xml_falhas + 1, xml_erro = ?", (motivo[:1000],))
+        return self._con.execute("SELECT xml_falhas FROM notas WHERE chave = ?", (chave,)).fetchone()[0]
+
+    def desistir_xml(self, chave: str, motivo: str) -> None:
+        self._atualizar_xml(chave, "xml = '', xml_erro = ?", (motivo[:1000],))
+
+    def _atualizar_xml(self, chave: str, campos: str, valores: tuple) -> None:
+        with self._con:
+            self._con.execute(f"UPDATE notas SET {campos}, atualizado_em = ? WHERE chave = ?",
+                              (*valores, _agora(), chave))
 
     # -------------------------------------------------------------- cobertura
 

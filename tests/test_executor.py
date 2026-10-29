@@ -27,14 +27,23 @@ def _nota(emissao=HOJE, tem_xml=True) -> NotaEspiao:
                       EMPRESA.cnpj, "Autorizada", "438.35", tem_xml)
 
 
+def xml_da_nota(chave: str) -> bytes:
+    return (f'<?xml version="1.0" encoding="UTF-8"?><nfeProc xmlns="http://www.portalfiscal.inf.br/nfe">'
+            f'<NFe><infNFe versao="4.00" Id="NFe{chave}"><ide/></infNFe></NFe></nfeProc>').encode()
+
+
 class EspiaoFalso:
-    def __init__(self, notas, falhas_no_download=0, xml_ao_investigar=False, investigar_quebra=False):
+    def __init__(self, notas, falhas_no_download=0, xml_ao_investigar=False, investigar_quebra=False,
+                 falhas_no_xml=0, xml_de_outra_nota=False):
         self.notas = notas
         self.falhas_restantes = falhas_no_download
         self.downloads = 0
         self.xml_ao_investigar = xml_ao_investigar
         self.investigar_quebra = investigar_quebra
         self.investigadas = []
+        self.falhas_xml_restantes = falhas_no_xml
+        self.xml_de_outra_nota = xml_de_outra_nota
+        self.downloads_xml = 0
 
     def investigar_xml(self, nota):
         self.investigadas.append(nota.chave)
@@ -59,6 +68,16 @@ class EspiaoFalso:
         pasta.mkdir(parents=True, exist_ok=True)
         arq = pasta / f"{nota.chave}-danfe.pdf"
         arq.write_bytes(b"%PDF-1.3\n" + b"0" * 2048)
+        return arq
+
+    def baixar_xml(self, nota, pasta):
+        self.downloads_xml += 1
+        if self.falhas_xml_restantes:
+            self.falhas_xml_restantes -= 1
+            raise RuntimeError("menu de download não abriu")
+        pasta.mkdir(parents=True, exist_ok=True)
+        arq = pasta / f"{nota.chave}.xml"
+        arq.write_bytes(xml_da_nota(gerar_chave(CNPJ_ACME_FILIAL, 1) if self.xml_de_outra_nota else nota.chave))
         return arq
 
     def capturar_tela(self, contexto):
@@ -242,3 +261,88 @@ def test_falha_ao_investigar_nao_derruba_nem_gasta_tentativa(tmp_path: Path):
     r = _rodar(tmp_path, ledger, EspiaoFalso([_nota(tem_xml=False)], investigar_quebra=True))
     assert r.erro_geral is None and r.aguardando_xml == 1 and r.falhas == 0
     assert ledger.obter(CHAVE).status == Status.AGUARDANDO_XML and ledger.obter(CHAVE).falhas == 0
+
+
+# ------------------------------------------------- XML ao lado do PDF
+
+PASTA_MES = Path("2026") / "OUTUBRO 26 - LOJA CENTRO"
+
+
+def test_xml_salvo_ao_lado_do_pdf_com_o_mesmo_nome(tmp_path: Path, monkeypatch):
+    _sem_validar_pdf(monkeypatch)
+    ledger = Ledger(tmp_path / "_dados" / "t.sqlite3")
+    espiao = EspiaoFalso([_nota()])
+    r = _rodar(tmp_path, ledger, espiao)
+    pasta = tmp_path / PASTA_MES
+    assert sorted(p.name for p in pasta.iterdir()) == ["ACME FILIAL 231026_RPA.pdf", "ACME FILIAL 231026_RPA.xml"]
+    assert r.baixadas == 1 and r.xmls == 1 and r.ok
+    assert ledger.obter(CHAVE).xml == str(pasta / "ACME FILIAL 231026_RPA.xml")
+    _rodar(tmp_path, ledger, espiao)                                # nada a fazer na execução seguinte
+    assert espiao.downloads == 1 and espiao.downloads_xml == 1
+
+
+def test_falha_no_xml_mantem_o_pdf_e_tenta_so_o_xml_depois(tmp_path: Path, monkeypatch):
+    _sem_validar_pdf(monkeypatch)
+    ledger = Ledger(tmp_path / "_dados" / "t.sqlite3")
+    espiao = EspiaoFalso([_nota()], falhas_no_xml=1)
+    r = _rodar(tmp_path, ledger, espiao)
+    assert r.baixadas == 1 and r.xmls == 0 and r.ok              # o PDF vale; XML não conta como falha da nota
+    assert ledger.obter(CHAVE).status == Status.BAIXADA and ledger.obter(CHAVE).xml is None
+    r = _rodar(tmp_path, ledger, espiao)
+    assert r.xmls == 1 and espiao.downloads == 1 and espiao.downloads_xml == 2
+    assert (tmp_path / PASTA_MES / "ACME FILIAL 231026_RPA.xml").is_file()
+
+
+def test_xml_desiste_apos_as_tentativas_e_avisa(tmp_path: Path, monkeypatch):
+    _sem_validar_pdf(monkeypatch)
+    ledger = Ledger(tmp_path / "_dados" / "t.sqlite3")
+    espiao = EspiaoFalso([_nota()], falhas_no_xml=99)
+    resumos = [_rodar(tmp_path, ledger, espiao) for _ in range(7)]
+    assert espiao.downloads_xml == 6                                # 1ª tentativa + 5 novas
+    assert resumos[5].desistencias and "XML" in resumos[5].desistencias[0]
+    assert ledger.obter(CHAVE).xml == "" and ledger.obter(CHAVE).status == Status.BAIXADA
+
+
+def test_xml_de_outra_nota_e_recusado(tmp_path: Path, monkeypatch):
+    _sem_validar_pdf(monkeypatch)
+    ledger = Ledger(tmp_path / "_dados" / "t.sqlite3")
+    r = _rodar(tmp_path, ledger, EspiaoFalso([_nota()], xml_de_outra_nota=True))
+    assert r.xmls == 0 and not (tmp_path / PASTA_MES / "ACME FILIAL 231026_RPA.xml").exists()
+    assert ledger.obter(CHAVE).xml is None
+
+
+def test_xml_de_nota_baixada_antes_da_funcao(tmp_path: Path, monkeypatch):
+    """Notas baixadas por versões anteriores ganham o XML; a pesquisa recua até a emissão delas."""
+    _sem_validar_pdf(monkeypatch)
+    ledger = Ledger(tmp_path / "_dados" / "t.sqlite3")
+    antiga = _nota_de(HOJE, 3001)
+    _rodar(tmp_path, ledger, EspiaoFalso([antiga]))
+    _rodar(tmp_path, ledger, EspiaoFalso([antiga]), hoje=HOJE + timedelta(days=4))  # cobertura avança
+    ledger._con.execute("UPDATE notas SET xml = NULL")              # como no banco anterior a esta versão
+    (tmp_path / PASTA_MES / "ACME FILIAL 231026_RPA.xml").unlink()
+    espiao = EspiaoFalso([antiga])
+    r = _rodar(tmp_path, ledger, espiao, hoje=HOJE + timedelta(days=5))
+    assert espiao.ultimo_desde == HOJE and espiao.downloads == 0 and r.xmls == 1
+    assert (tmp_path / PASTA_MES / "ACME FILIAL 231026_RPA.xml").is_file()
+
+
+def test_xml_nao_baixado_se_o_pdf_sumiu(tmp_path: Path, monkeypatch):
+    _sem_validar_pdf(monkeypatch)
+    ledger = Ledger(tmp_path / "_dados" / "t.sqlite3")
+    espiao = EspiaoFalso([_nota()], falhas_no_xml=1)
+    _rodar(tmp_path, ledger, espiao)
+    (tmp_path / PASTA_MES / "ACME FILIAL 231026_RPA.pdf").unlink()  # alguém moveu o PDF
+    r = _rodar(tmp_path, ledger, espiao)
+    assert espiao.downloads_xml == 1 and r.xmls == 0 and r.ok
+    assert ledger.obter(CHAVE).xml == ""
+    assert not list((tmp_path / PASTA_MES).glob("*.xml"))
+
+
+def test_xml_ja_presente_e_so_registrado(tmp_path: Path, monkeypatch):
+    _sem_validar_pdf(monkeypatch)
+    ledger = Ledger(tmp_path / "_dados" / "t.sqlite3")
+    espiao = EspiaoFalso([_nota()], falhas_no_xml=1)
+    _rodar(tmp_path, ledger, espiao)
+    (tmp_path / PASTA_MES / "ACME FILIAL 231026_RPA.xml").write_bytes(xml_da_nota(CHAVE))  # salvo à mão
+    r = _rodar(tmp_path, ledger, espiao)
+    assert r.xmls == 1 and espiao.downloads_xml == 1

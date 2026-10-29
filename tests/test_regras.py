@@ -19,6 +19,7 @@ from rpa_nf_esp.espiao import decodificar_resposta, nota_da_api
 from rpa_nf_esp.ledger import DadosNota, Ledger, Status
 from rpa_nf_esp.nomes import (
     base_nome,
+    gravar_ao_lado,
     gravar_sem_sobrescrever,
     limpar_para_arquivo,
     proximo_nome,
@@ -26,6 +27,7 @@ from rpa_nf_esp.nomes import (
 )
 from rpa_nf_esp.pastas import GerenciadorPastas, interpretar_pasta_mes
 from rpa_nf_esp.pdf import PdfInvalido, chaves_proprias, validar_danfe
+from rpa_nf_esp.xml_nfe import XmlInvalido, validar_xml_nfe
 
 CHAVE = gerar_chave(CNPJ_ACME_FILIAL, 2830984)
 LOG = logging.getLogger("teste")
@@ -116,6 +118,53 @@ def test_renomear_recusa_destino_existente(tmp_path: Path):
         renomear_sem_sobrescrever(origem, destino)
     assert destino.read_bytes() == b"antigo"
     assert origem.read_bytes() == b"novo"
+
+
+def test_xml_vai_ao_lado_do_pdf_sem_sobrescrever(tmp_path: Path):
+    pdf = tmp_path / "ACME 231026 2_RPA.pdf"
+    pdf.write_bytes(b"%PDF")
+    origem = tmp_path / "baixado.xml"
+    origem.write_bytes(b"<novo/>")
+    assert gravar_ao_lado(origem, pdf, ".xml") == tmp_path / "ACME 231026 2_RPA.xml"
+    with pytest.raises(FileExistsError):
+        gravar_ao_lado(origem, pdf, ".xml")
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["ACME 231026 2_RPA.pdf", "ACME 231026 2_RPA.xml", "baixado.xml"]
+
+
+def _xml(tmp_path: Path, conteudo: str) -> Path:
+    arq = tmp_path / "n.xml"
+    arq.write_text(conteudo, encoding="utf-8")
+    return arq
+
+
+def test_xml_da_nota_confere_pela_chave(tmp_path: Path):
+    ns = 'xmlns="http://www.portalfiscal.inf.br/nfe"'
+    arq = _xml(tmp_path, f'<nfeProc {ns}><NFe><infNFe Id="NFe{CHAVE}"/></NFe><protNFe/></nfeProc>')
+    validar_xml_nfe(arq, CHAVE)
+    with pytest.raises(XmlInvalido, match="não é da nota"):
+        validar_xml_nfe(arq, gerar_chave(CNPJ_ACME, 1))
+    with pytest.raises(XmlInvalido, match="ilegível"):
+        validar_xml_nfe(_xml(tmp_path, "<html>erro"), CHAVE)
+
+
+def test_ledger_antigo_ganha_as_colunas_do_xml(tmp_path: Path):
+    import sqlite3
+    caminho = tmp_path / "antigo.sqlite3"
+    con = sqlite3.connect(caminho)
+    con.execute("CREATE TABLE notas (chave TEXT PRIMARY KEY, empresa_cnpj TEXT NOT NULL, emitente_cnpj TEXT, "
+                "emitente_nome TEXT, numero TEXT, serie TEXT, emissao TEXT NOT NULL, valor TEXT, situacao_sefaz TEXT, "
+                "status TEXT NOT NULL, falhas INTEGER NOT NULL DEFAULT 0, ultimo_erro TEXT, arquivo TEXT, "
+                "primeira_execucao INTEGER, ultima_execucao INTEGER, criado_em TEXT NOT NULL, atualizado_em TEXT NOT NULL)")
+    con.execute("INSERT INTO notas (chave, empresa_cnpj, emissao, status, arquivo, criado_em, atualizado_em) "
+                "VALUES (?, ?, '2026-10-23', 'BAIXADA', 'x.pdf', '', '')", (CHAVE, CNPJ_LOJA_CENTRO))
+    con.commit()
+    con.close()
+    ledger = Ledger(caminho)
+    assert [r.chave for r in ledger.xml_pendentes(CNPJ_LOJA_CENTRO, date(2026, 10, 1))] == [CHAVE]
+    assert ledger.registrar_falha_xml(CHAVE, "erro") == 1
+    ledger.marcar_xml(CHAVE, "x.xml")
+    assert ledger.xml_pendentes(CNPJ_LOJA_CENTRO, date(2026, 10, 1)) == []
+    assert ledger.obter(CHAVE).xml == "x.xml"
 
 
 def test_temporario_nao_fica_na_pasta_se_a_copia_falhar(tmp_path: Path, monkeypatch):

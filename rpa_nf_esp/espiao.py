@@ -6,8 +6,8 @@ Decisões de robustez:
   quais notas existem, inclusive "nenhuma", sem depender de tempo de renderização. Se o
   formato mudar, cai para a leitura da tabela na tela, localizando colunas pelo cabeçalho.
 - Cada linha é localizada pela chave de acesso (única), nunca pela posição.
-- O nome do arquivo entregue pelo site é "<chave>-danfe.pdf"; se não bater com a chave
-  da linha clicada, o download é recusado.
+- O nome do arquivo entregue pelo site é "<chave>-danfe.pdf" (DANFE) ou "<chave>.xml" (XML);
+  se não contiver a chave da linha clicada, o download é recusado.
 """
 
 import base64
@@ -34,6 +34,7 @@ ALCANCE_MAXIMO_DIAS = ATALHOS_PERIODO[-1][1]
 
 _ACAO_PESQUISA = "ll=" + base64.b64encode(b"pesqNfe").decode().rstrip("=")
 _TEXTO_MENU_DANFE = "Download Danfe em PDF"
+_TEXTO_MENU_XML = "Download do XML"
 TENTATIVAS_LOGIN = 3
 
 
@@ -497,6 +498,13 @@ class EspiaoNFe:
     # --------------------------------------------------------------- download
 
     def baixar_danfe(self, nota: NotaEspiao, pasta: Path) -> Path:
+        return self._baixar(nota, pasta, _TEXTO_MENU_DANFE, f"{nota.chave}-danfe.pdf")
+
+    def baixar_xml(self, nota: NotaEspiao, pasta: Path) -> Path:
+        return self._baixar(nota, pasta, _TEXTO_MENU_XML, f"{nota.chave}.xml")
+
+    def _baixar(self, nota: NotaEspiao, pasta: Path, item_menu: str, nome: str) -> Path:
+        """Abre o menu de download da linha da nota, clica em `item_menu` e salva em `pasta/nome`."""
         pg = self.page
         linha = self._localizar_linha(nota.chave)
         botao = linha.locator("a[aria-label='Download']")
@@ -506,7 +514,7 @@ class EspiaoNFe:
             raise ErroEspiao("botão de download não encontrado na linha da nota")
         botao.scroll_into_view_if_needed()
         botao.click()
-        item = pg.locator("li[role='menuitem']").filter(has_text=_TEXTO_MENU_DANFE).first
+        item = self._na_tela("li[role='menuitem']").filter(has_text=item_menu).first
         item.wait_for(state="visible", timeout=10000)
         with pg.expect_download(timeout=self.cfg.timeout_download_ms) as info:
             item.click()
@@ -518,7 +526,7 @@ class EspiaoNFe:
             download.delete()
             raise ErroEspiao(f"o site entregou outro arquivo ({download.suggested_filename})")
         pasta.mkdir(parents=True, exist_ok=True)
-        destino = pasta / f"{nota.chave}-danfe.pdf"
+        destino = pasta / nome
         download.save_as(destino)
         self.fechar_menus()
         return destino

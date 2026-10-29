@@ -32,6 +32,7 @@ flowchart LR
 | `pastas.py` | localizar/criar pasta do mês; virada de mês e de ano | não |
 | `nomes.py` | padrão de nome, sequência ` 2`/` 3`, gravação atômica | não |
 | `pdf.py` | validar DANFE baixado; índice de chaves dos PDFs da pasta | não |
+| `xml_nfe.py` | validar o XML baixado (Id do `infNFe` = `NFe` + chave) | não |
 | `apelidos.py` | lista de apelidos (markdown) + sobreposições (CSV) | não |
 | `ledger.py` | estado persistente de cada nota e de cada execução | não |
 | `documentos.py` | dígito verificador de CNPJ e chave de acesso | não |
@@ -128,6 +129,13 @@ Se o banco de controle for perdido, a camada 2 sozinha impede downloads repetido
 ## Nomes e gravação
 
 - `APELIDO DDMMAA<sufixo>.pdf`; a 2ª, 3ª… nota do mesmo fornecedor no mesmo dia recebe ` 2`, ` 3`.
+- O XML fica ao lado do PDF com o mesmo nome (`APELIDO DDMMAA<sufixo>.xml`). A numeração, o índice
+  de chaves e a conferência olham só os `.pdf`, então o XML não interfere neles.
+- O XML é baixado logo depois do PDF. Se falhar, a nota continua `BAIXADA` e o banco guarda o XML
+  como pendente (coluna `xml` nula, `xml_falhas` conta as tentativas): nas execuções seguintes a
+  pesquisa recua até a emissão dessas notas e só o XML é baixado. Depois de 1 + 5 tentativas, ou se
+  o PDF não estiver mais na pasta, o XML é desistido (`xml = ''`); a desistência por tentativas entra
+  no alerta por e-mail. Notas baixadas antes desta função ganham o XML do mesmo jeito.
 - A sequência considera arquivos manuais e compara **sem acento e sem caixa**
   (`CAFE BOM` = `CAFÉ BOM`).
 - Caracteres inválidos no Windows são removidos (`/` vira `-`), nomes reservados (`CON`, `PRN`…) são
@@ -161,7 +169,7 @@ NOTAS FISCAIS\2025\DEZEMBRO 25 - LOJA CENTRO          <- anos anteriores, achata
 | A pesquisa responde com um JSON em base64 (POST `espiaoCtrl`, ação `pesqNfe`) | A lista de notas vem dessa resposta, capturada no clique em *Pesquisar*. Ela diz exatamente quais notas existem, inclusive "nenhuma", sem depender de tempo de renderização. Se o formato mudar, cai para a leitura da tabela, achando as colunas pelo **texto do cabeçalho** (as colunas são reordenáveis pelo usuário). |
 | Ao carregar, a tela restaura de forma assíncrona a última empresa usada **pela conta** | Espera a tela estabilizar; cada tentativa de seleção é independente e conferida depois de uma pausa; confere de novo antes de pesquisar; e cada nota devolvida é validada contra o CNPJ pedido. |
 | Depois de um download, o menu MUI deixa `aria-hidden="true"` no `#root` | Botões são localizados por CSS e texto, nunca por papel de acessibilidade (`get_by_role` deixaria de encontrá-los). |
-| O arquivo baixado se chama `<chave>-danfe.pdf` | Se a chave não for a da linha clicada, o download é descartado. |
+| O arquivo baixado se chama `<chave>-danfe.pdf` (DANFE) ou `<chave>.xml` (XML, menu *Download do XML*) | Se a chave não for a da linha clicada, o download é descartado. O XML entregue é o `nfeProc` (nota + protocolo de autorização). |
 | O período é um *DateRangePicker* que não aceita digitação confiável | Usa os atalhos (*Hoje*, *Últimos 7 dias*, *Últimos 30 dias*), o menor que cobre o período, e confere o valor aplicado. |
 | A sessão não sobrevive a `storage_state` | Login a cada execução (cerca de 6 s). |
 | Notas "Sem XML" não têm botão de download | O RPA clica em *Investigar XML* (`a[aria-label='Investigar XML']`), espera o resgate, fecha a janela em *Fechar* e pesquisa de novo. Durante isso, o fechador automático de janelas é suspenso. Sem XML ainda, viram `AGUARDANDO_XML`. |

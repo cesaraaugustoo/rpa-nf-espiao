@@ -6,8 +6,8 @@
 
 Automação (RPA) em Python + [Playwright](https://playwright.dev/python/) que entra no
 **[Espião NF-e](https://app.espiaonfe.com.br)**, encontra as notas fiscais eletrônicas recebidas
-por cada empresa, baixa o **DANFE em PDF** e salva cada um na pasta do mês da loja certa, com o
-nome no padrão da empresa, **sem nunca baixar a mesma nota duas vezes**.
+por cada empresa, baixa o **DANFE em PDF** e o **XML** de cada nota e salva os dois na pasta do mês
+da loja certa, com o nome no padrão da empresa, **sem nunca baixar a mesma nota duas vezes**.
 
 Roda sozinho pelo Agendador de Tarefas do Windows, de hora em hora, e se recupera de falhas:
 site instável, nota ainda sem XML, OneDrive ocupado, virada de mês e de ano.
@@ -48,6 +48,10 @@ Em cada execução, para **cada empresa configurada**:
                                                ACME 231026 2_RPA.pdf   <- 2ª nota do mesmo fornecedor no dia
    ```
 
+   Em seguida baixa *Download do XML*, confere que é o XML **da mesma nota** (chave de acesso no
+   `infNFe`) e salva ao lado do PDF, com o mesmo nome: `ACME 231026_RPA.xml`. Se o XML falhar, o
+   PDF continua valendo e o XML é tentado de novo nas próximas execuções.
+
 4. Registra tudo num log TXT diário e num banco de controle local.
 
 Além disso:
@@ -77,6 +81,7 @@ flowchart TD
     F -->|cancelada| I[CANCELADA]
     F -->|nova| J[Baixa DANFE] --> K{PDF íntegro<br/>e chave confere?}
     K -->|sim| L[Salva sem sobrescrever<br/>APELIDO DDMMAA_RPA.pdf] --> M[BAIXADA]
+    M --> X[Baixa o XML e salva ao lado<br/>APELIDO DDMMAA_RPA.xml]
     K -->|não| N[PENDENTE<br/>nova tentativa nas próximas 5 execuções]
 ```
 
@@ -212,6 +217,7 @@ rpa-nf-espiao/
 │   ├── nomes.py         # padrão de nome e gravação sem sobrescrever
 │   ├── apelidos.py      # leitura da lista de apelidos
 │   ├── pdf.py           # validação do DANFE e índice de chaves dos PDFs
+│   ├── xml_nfe.py       # validação do XML da NF-e
 │   ├── ledger.py        # banco de controle (SQLite)
 │   ├── documentos.py    # validação de CNPJ e chave de acesso
 │   ├── config.py        # carga e validação da configuração

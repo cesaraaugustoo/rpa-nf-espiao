@@ -11,16 +11,18 @@ from .apelidos import MapaApelidos
 from .config import Config, Empresa
 from .documentos import ChaveAcesso
 from .espiao import ALCANCE_MAXIMO_DIAS, EspiaoNFe, NotaEspiao, SemXml, resumir_erro, sessao_espiao
-from .ledger import CONCLUIDAS, DadosNota, Ledger, Status
-from .nomes import base_nome, gravar_sem_sobrescrever, normalizar
+from .ledger import CONCLUIDAS, DadosNota, Ledger, RegistroNota, Status
+from .nomes import base_nome, gravar_ao_lado, gravar_sem_sobrescrever, normalizar
 from .pastas import GerenciadorPastas
 from .pdf import IndiceChaves, validar_danfe
+from .xml_nfe import validar_xml_nfe
 
 @dataclass
 class ResumoEmpresa:
     empresa: str
     na_janela: int = 0
     baixadas: int = 0
+    xmls: int = 0                                        # XMLs salvos ao lado do PDF (também de notas anteriores)
     ja_existiam: int = 0
     aguardando_xml: int = 0
     falhas: int = 0
@@ -94,9 +96,12 @@ class Executor:
         for r in em_aberto:
             if r.emissao < limite:
                 self._encerrar(r, f"emissão há mais de {ALCANCE_MAXIMO_DIAS} dias, fora do alcance da pesquisa", resumo)
-        desde = min([inicio_janela] + [r.emissao for r in alcancaveis])
+        xml_pendentes = self.ledger.xml_pendentes(empresa.cnpj, limite)
+        desde = min([inicio_janela] + [r.emissao for r in alcancaveis] + [r.emissao for r in xml_pendentes])
         if alcancaveis:
             self.log.info("%d nota(s) em aberto de execuções anteriores serão tentadas de novo", len(alcancaveis))
+        if xml_pendentes:
+            self.log.info("%d nota(s) já baixada(s) ainda sem o XML ao lado do PDF", len(xml_pendentes))
 
         try:
             notas = espiao.pesquisar_com_retentativa(empresa, desde, self.hoje)
@@ -133,6 +138,14 @@ class Executor:
         ordenados = sorted(alvos.values(), key=lambda n: (n.emissao, n.emitente_cnpj, _numero_ordenacao(n)))
         for nota in ordenados:
             self._processar_nota_protegido(espiao, empresa, nota, resumo)
+        for registro in xml_pendentes:
+            try:
+                self._xml_pendente(espiao, empresa, registro, por_chave.get(registro.chave), resumo)
+            except Exception as e:
+                self.log.debug("Erro inesperado no XML da NF %s (%s)", registro.numero, registro.chave, exc_info=True)
+                self._falha_xml(registro.chave, f"NF {registro.numero} - {registro.emitente_nome}",
+                                f"erro inesperado: {resumir_erro(e)}", resumo)
+                self._tentar_recuperar(espiao)
         if self._sem_xml:
             self._investigar_sem_xml(espiao, empresa, desde, resumo)
         # Todas as notas do período foram vistas: as que falharam já estão no ledger como pendentes.
@@ -265,7 +278,7 @@ class Executor:
                              "e não dá para ler a chave. Conferir após o download: %s", "', '".join(suspeitos), rotulo)
 
         if self.ensaio:
-            self.log.info("[ensaio] baixaria %s -> %s\\%s%s.pdf (apelido: %s)",
+            self.log.info("[ensaio] baixaria %s -> %s\\%s%s.pdf + .xml (apelido: %s)",
                           rotulo, pasta.name, base, self.cfg.sufixo_rpa, resolucao.origem)
             return
 
@@ -291,6 +304,72 @@ class Executor:
         resumo.baixadas += 1
         resumo.arquivos.append(destino.name)
         self.log.info("BAIXADA: %s -> %s\\%s (apelido %s)", rotulo, pasta.name, destino.name, resolucao.origem)
+        self._baixar_xml(espiao, nota, destino, rotulo, resumo)
+
+    # -------------------------------------------------------------------- XML
+
+    def _xml_pendente(self, espiao: EspiaoNFe, empresa: Empresa, registro: RegistroNota,
+                      nota: NotaEspiao | None, resumo: ResumoEmpresa) -> None:
+        """XML de uma nota baixada em execução anterior (falha anterior ou nota de antes desta função)."""
+        rotulo = f"NF {registro.numero} de {registro.emissao:%d/%m/%Y} - {registro.emitente_nome}"
+        pdf = self._localizar_pdf(empresa, registro)
+        if pdf is None:
+            self.log.warning("XML não baixado: o PDF de %s não está mais na pasta (renomeado ou movido?). "
+                             "Baixar o XML à mão, se precisar.", rotulo)
+            if not self.ensaio:
+                self.ledger.desistir_xml(registro.chave, "PDF não encontrado na pasta")
+            return
+        if nota is None:
+            self._falha_xml(registro.chave, rotulo, "a nota não apareceu na pesquisa do Espião", resumo)
+            return
+        self._baixar_xml(espiao, nota, pdf, rotulo, resumo)
+
+    def _localizar_pdf(self, empresa: Empresa, registro: RegistroNota) -> Path | None:
+        """PDF da nota na pasta do mês (pela chave dentro do arquivo, mesmo se renomeado) ou no caminho gravado."""
+        pasta = self.pastas.pasta_do_mes(empresa, registro.emissao, self.hoje, criar=False)
+        nome = self.indice.chaves_na_pasta(pasta).get(registro.chave)
+        if nome:
+            return pasta / nome
+        salvo = Path(registro.arquivo) if registro.arquivo else None
+        return salvo if salvo and salvo.is_file() else None
+
+    def _baixar_xml(self, espiao: EspiaoNFe, nota: NotaEspiao, pdf: Path, rotulo: str, resumo: ResumoEmpresa) -> None:
+        """Salva o XML ao lado do PDF, com o mesmo nome. Falha aqui não desfaz o PDF: o XML fica
+        pendente e é tentado de novo nas próximas execuções."""
+        destino = pdf.with_suffix(".xml")
+        if self.ensaio:
+            self.log.info("[ensaio] baixaria o XML de %s -> %s\\%s", rotulo, pdf.parent.name, destino.name)
+            return
+        try:
+            if destino.exists():  # já estava lá (salvo à mão): só confere e registra
+                validar_xml_nfe(destino, nota.chave)
+            else:
+                temporario = espiao.baixar_xml(nota, self.staging)
+                validar_xml_nfe(temporario, nota.chave)
+                destino = gravar_ao_lado(temporario, pdf, ".xml")
+                temporario.unlink(missing_ok=True)
+        except Exception as e:
+            espiao.capturar_tela(f"xml_{nota.chave}")
+            espiao.fechar_menus()
+            self.log.debug("Detalhes da falha no XML", exc_info=True)
+            self._falha_xml(nota.chave, rotulo, resumir_erro(e), resumo)
+            return
+        self.ledger.marcar_xml(nota.chave, str(destino))
+        resumo.xmls += 1
+        self.log.info("XML: %s -> %s\\%s", rotulo, destino.parent.name, destino.name)
+
+    def _falha_xml(self, chave: str, rotulo: str, motivo: str, resumo: ResumoEmpresa) -> None:
+        if self.ensaio:
+            self.log.warning("[ensaio] XML de %s não seria baixado: %s", rotulo, motivo)
+            return
+        falhas = self.ledger.registrar_falha_xml(chave, motivo)
+        if falhas > self.cfg.max_retentativas:
+            self.ledger.desistir_xml(chave, motivo)
+            resumo.desistencias.append(f"{rotulo} - XML: {motivo} (após {falhas} tentativas)")
+            self.log.error("XML DESISTIDO após %d tentativas: %s - %s. Baixar o XML à mão.", falhas, rotulo, motivo)
+        else:
+            self.log.warning("XML não baixado (%dª falha): %s - %s. Nova tentativa na próxima execução.",
+                             falhas, rotulo, motivo)
 
     def _aguardar_xml(self, nota: NotaEspiao, empresa: Empresa, rotulo: str, resumo: ResumoEmpresa) -> None:
         idade = (self.hoje - nota.emissao).days
@@ -351,7 +430,8 @@ def resumo_para_log(resumos: list[ResumoEmpresa]) -> list[str]:
     linhas = ["RESUMO DA EXECUÇÃO"]
     for r in resumos:
         partes = [
-            f"{r.na_janela} na janela", f"{r.baixadas} baixada(s)", f"{r.ja_existiam} já existia(m)",
+            f"{r.na_janela} na janela", f"{r.baixadas} baixada(s)", f"{r.xmls} XML",
+            f"{r.ja_existiam} já existia(m)",
             f"{r.aguardando_xml} aguardando XML", f"{r.falhas} falha(s)", f"{r.desistidas} desistida(s)",
         ]
         if r.canceladas:

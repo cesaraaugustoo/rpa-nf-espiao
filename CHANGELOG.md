@@ -3,6 +3,16 @@
 Formato baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/); versões seguem
 [SemVer](https://semver.org/lang/pt-BR/).
 
+## [1.4.0] - 2026-10-29
+
+### Adicionado
+
+- XML da nota: depois do PDF, o RPA baixa *Download do XML*, confere que é o XML da mesma nota
+  e salva ao lado do PDF com o mesmo nome (`ACME 231026_RPA.xml`). Falha no XML não desfaz o PDF:
+  o XML é tentado de novo nas próximas execuções (1 + 5 tentativas, depois entra no alerta).
+- Notas baixadas antes desta versão, ainda no alcance da pesquisa (29 dias), ganham o XML na
+  primeira execução.
+
 ## [1.3.0] - 2026-10-27
 
 ### Adicionado

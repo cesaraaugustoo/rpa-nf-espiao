@@ -12,7 +12,7 @@ O RPA roda sozinho de hora em hora. No dia a dia, basta:
 
    ```
    RESUMO DA EXECUÇÃO
-     LOJA CENTRO   5 na janela | 1 baixada(s) | 2 já existia(m) | 1 aguardando XML | 0 falha(s) | 0 desistida(s)
+     LOJA CENTRO   5 na janela | 1 baixada(s) | 1 XML | 2 já existia(m) | 1 aguardando XML | 0 falha(s) | 0 desistida(s)
                    + ACME 231026_RPA.pdf
    ```
 
@@ -37,6 +37,10 @@ Falha isolada de download não gera e-mail (é retentada sozinha) e aparece no r
 | No log | Significado | Ação |
 |---|---|---|
 | `BAIXADA: ...` | DANFE salvo na pasta | nenhuma |
+| `XML: ...` | XML salvo ao lado do PDF, com o mesmo nome | nenhuma |
+| `AVISO \| XML não baixado (1ª falha)` | o PDF foi salvo, o XML não; será tentado nas próximas execuções | nenhuma, a menos que se repita |
+| `ERRO \| XML DESISTIDO após 6 tentativas` | o XML não veio; o PDF está na pasta | baixar o XML à mão no Espião |
+| `AVISO \| XML não baixado: o PDF ... não está mais na pasta` | o PDF foi movido ou apagado; o RPA não cria um XML solto | nenhuma (baixar à mão, se precisar) |
 | `Já está na pasta como '...'` | alguém já tinha salvo a nota (o RPA reconheceu pela chave) | nenhuma |
 | `Sem XML no Espião` + `Investigar XML acionado` | a SEFAZ só tinha entregado o resumo; o RPA pediu o XML ao Espião | nenhuma |
 | `XML disponível após investigar` | o XML veio e a nota é baixada no mesmo ciclo | nenhuma |
