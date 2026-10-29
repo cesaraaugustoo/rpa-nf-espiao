@@ -136,6 +136,10 @@ Se o banco de controle for perdido, a camada 2 sozinha impede downloads repetido
   pesquisa recua até a emissão dessas notas e só o XML é baixado. Depois de 1 + 5 tentativas, ou se
   o PDF não estiver mais na pasta, o XML é desistido (`xml = ''`); a desistência por tentativas entra
   no alerta por e-mail. Notas baixadas antes desta função ganham o XML do mesmo jeito.
+- Uma falha no meio do XML pode deixar a tela num estado desconhecido (o Espião aceita uma
+  sessão por conta: um login com a mesma conta, no navegador, derruba o RPA). O RPA volta à tela de
+  NF-e, entrando de novo se preciso, e refaz a pesquisa antes da próxima nota; se não conseguir,
+  os XMLs restantes da empresa ficam para a próxima execução sem gastar tentativa.
 - A sequência considera arquivos manuais e compara **sem acento e sem caixa**
   (`CAFE BOM` = `CAFÉ BOM`).
 - Caracteres inválidos no Windows são removidos (`/` vira `-`), nomes reservados (`CON`, `PRN`…) são

@@ -63,6 +63,7 @@ class Executor:
         self.apelidos: MapaApelidos | None = None
         self.staging = cfg.dir_dados / "staging"
         self._sem_xml: list[NotaEspiao] = []  # notas "Sem XML" da empresa em processamento
+        self._tela_suja = False               # um download de XML falhou: a tela precisa ser restaurada
 
     # --------------------------------------------------------------- execução
 
@@ -136,16 +137,23 @@ class Executor:
 
         self._sem_xml: list[NotaEspiao] = []
         ordenados = sorted(alvos.values(), key=lambda n: (n.emissao, n.emitente_cnpj, _numero_ordenacao(n)))
+        self._tela_suja = False
         for nota in ordenados:
             self._processar_nota_protegido(espiao, empresa, nota, resumo)
-        for registro in xml_pendentes:
+            if self._tela_suja:
+                self._restaurar_tela(espiao, empresa, desde)
+        for i, registro in enumerate(xml_pendentes):
             try:
                 self._xml_pendente(espiao, empresa, registro, por_chave.get(registro.chave), resumo)
             except Exception as e:
                 self.log.debug("Erro inesperado no XML da NF %s (%s)", registro.numero, registro.chave, exc_info=True)
                 self._falha_xml(registro.chave, f"NF {registro.numero} - {registro.emitente_nome}",
                                 f"erro inesperado: {resumir_erro(e)}", resumo)
-                self._tentar_recuperar(espiao)
+                self._tela_suja = True
+            if self._tela_suja and not self._restaurar_tela(espiao, empresa, desde):
+                self.log.warning("%d XML(s) pendente(s) de %s ficam para a próxima execução, sem gastar tentativa.",
+                                 len(xml_pendentes) - i - 1, empresa.rotulo)
+                break
         if self._sem_xml:
             self._investigar_sem_xml(espiao, empresa, desde, resumo)
         # Todas as notas do período foram vistas: as que falharam já estão no ledger como pendentes.
@@ -219,6 +227,19 @@ class Executor:
                            "conferidas à mão (EXECUTAR_AGORA.bat --conferir).", ALCANCE_MAXIMO_DIAS, f"{limite:%d/%m/%Y}")
             inicio = limite
         return inicio
+
+    def _restaurar_tela(self, espiao: EspiaoNFe, empresa: Empresa, desde: date) -> bool:
+        """Depois de uma falha no meio de um download do XML (sessão derrubada por um login com a
+        mesma conta, aviso aberto...), volta à tela de NF-e e refaz a pesquisa. Sem isso as notas
+        seguintes da empresa falhariam todas por "linha não encontrada", gastando tentativas."""
+        self._tela_suja = False
+        self._tentar_recuperar(espiao)
+        try:
+            espiao.pesquisar_com_retentativa(empresa, desde, self.hoje)
+            return True
+        except Exception as e:
+            self.log.warning("A pesquisa de %s não voltou depois da falha: %s", empresa.rotulo, resumir_erro(e))
+            return False
 
     def _tentar_recuperar(self, espiao: EspiaoNFe) -> None:
         try:
@@ -350,9 +371,9 @@ class Executor:
                 temporario.unlink(missing_ok=True)
         except Exception as e:
             espiao.capturar_tela(f"xml_{nota.chave}")
-            espiao.fechar_menus()
             self.log.debug("Detalhes da falha no XML", exc_info=True)
             self._falha_xml(nota.chave, rotulo, resumir_erro(e), resumo)
+            self._tela_suja = True
             return
         self.ledger.marcar_xml(nota.chave, str(destino))
         resumo.xmls += 1

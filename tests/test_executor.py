@@ -55,6 +55,7 @@ class EspiaoFalso:
 
     def pesquisar(self, empresa, desde, ate):
         self.ultimo_desde = desde
+        self.pesquisas = getattr(self, "pesquisas", 0) + 1
         return [n for n in self.notas if desde <= n.emissao <= ate]
 
     def pesquisar_com_retentativa(self, empresa, desde, ate):
@@ -346,3 +347,38 @@ def test_xml_ja_presente_e_so_registrado(tmp_path: Path, monkeypatch):
     (tmp_path / PASTA_MES / "ACME FILIAL 231026_RPA.xml").write_bytes(xml_da_nota(CHAVE))  # salvo à mão
     r = _rodar(tmp_path, ledger, espiao)
     assert r.xmls == 1 and espiao.downloads_xml == 1
+
+
+def test_falha_no_xml_restaura_a_tela_e_segue_com_as_proximas(tmp_path: Path, monkeypatch):
+    """Sessão derrubada no meio de um XML: a tela é restaurada (nova pesquisa) e os XMLs
+    seguintes da empresa continuam, em vez de falharem todos por "linha não encontrada"."""
+    _sem_validar_pdf(monkeypatch)
+    ledger = Ledger(tmp_path / "_dados" / "t.sqlite3")
+    notas = [_nota_de(HOJE, 4001), _nota_de(HOJE, 4002), _nota_de(HOJE, 4003)]
+    _rodar(tmp_path, ledger, EspiaoFalso(notas, falhas_no_xml=3))     # os 3 XMLs falham na 1ª vez
+    espiao = EspiaoFalso(notas, falhas_no_xml=1)
+    r = _rodar(tmp_path, ledger, espiao)
+    assert r.xmls == 2 and espiao.pesquisas == 2                    # pesquisa normal + 1 restauração
+    assert len(ledger.xml_pendentes(EMPRESA.cnpj, HOJE)) == 1
+
+
+class EspiaoQueNaoVolta(EspiaoFalso):
+    def recuperar(self):
+        raise RuntimeError("site fora do ar")
+
+    def pesquisar(self, empresa, desde, ate):
+        if getattr(self, "pesquisas", 0) >= 1:
+            raise RuntimeError("site fora do ar")
+        return super().pesquisar(empresa, desde, ate)
+
+
+def test_xml_restantes_ficam_para_depois_sem_gastar_tentativa(tmp_path: Path, monkeypatch):
+    _sem_validar_pdf(monkeypatch)
+    ledger = Ledger(tmp_path / "_dados" / "t.sqlite3")
+    notas = [_nota_de(HOJE, 4001), _nota_de(HOJE, 4002), _nota_de(HOJE, 4003)]
+    _rodar(tmp_path, ledger, EspiaoFalso(notas, falhas_no_xml=3))
+    espiao = EspiaoQueNaoVolta(notas, falhas_no_xml=1)
+    r = _rodar(tmp_path, ledger, espiao)
+    assert r.xmls == 0 and espiao.downloads_xml == 1                # parou depois da 1ª falha
+    falhas = dict(ledger._con.execute("SELECT numero, xml_falhas FROM notas").fetchall())
+    assert falhas == {"4001": 2, "4002": 1, "4003": 1}
