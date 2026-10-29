@@ -501,10 +501,12 @@ class EspiaoNFe:
         return self._baixar(nota, pasta, _TEXTO_MENU_DANFE, f"{nota.chave}-danfe.pdf")
 
     def baixar_xml(self, nota: NotaEspiao, pasta: Path) -> Path:
-        return self._baixar(nota, pasta, _TEXTO_MENU_XML, f"{nota.chave}.xml")
+        # Depois do download o site abre o aviso "Pronto! XML gerado com sucesso!", que cobre a tela até o OK.
+        return self._baixar(nota, pasta, _TEXTO_MENU_XML, f"{nota.chave}.xml", aviso_ms=10000)
 
-    def _baixar(self, nota: NotaEspiao, pasta: Path, item_menu: str, nome: str) -> Path:
-        """Abre o menu de download da linha da nota, clica em `item_menu` e salva em `pasta/nome`."""
+    def _baixar(self, nota: NotaEspiao, pasta: Path, item_menu: str, nome: str, aviso_ms: int = 0) -> Path:
+        """Abre o menu de download da linha da nota, clica em `item_menu` e salva em `pasta/nome`.
+        Com `aviso_ms`, espera esse tempo pelo aviso de conclusão do site e o fecha."""
         pg = self.page
         linha = self._localizar_linha(nota.chave)
         botao = linha.locator("a[aria-label='Download']")
@@ -519,6 +521,8 @@ class EspiaoNFe:
         with pg.expect_download(timeout=self.cfg.timeout_download_ms) as info:
             item.click()
         download = info.value
+        if aviso_ms:
+            self._fechar_aviso(aviso_ms)
         falha = download.failure()
         if falha:
             raise ErroEspiao(f"download falhou: {falha}")
@@ -546,6 +550,22 @@ class EspiaoNFe:
     def fechar_menus(self) -> None:
         if self.page.locator("[role='menu']").count():
             self.page.keyboard.press("Escape")
+        if self._botao_aviso().is_visible():
+            self._fechar_aviso(1000)
+
+    def _botao_aviso(self) -> Locator:
+        return self.page.locator(".swal2-container .swal2-confirm").first
+
+    def _fechar_aviso(self, espera_ms: int) -> None:
+        """Fecha o aviso SweetAlert do site (ex.: "XML gerado com sucesso!"), que bloqueia os cliques."""
+        ok = self._botao_aviso()
+        try:
+            ok.wait_for(state="visible", timeout=espera_ms)
+        except TempoEsgotado:
+            self.log.debug("Aviso de conclusão não apareceu em %d ms; seguindo", espera_ms)
+            return
+        ok.click()
+        expect(self.page.locator(".swal2-container")).to_have_count(0, timeout=10000)
 
     def _fechar_modal(self, modal: Locator) -> None:
         botao = modal.locator("button.close, .btn-close, [aria-label='Close'], [aria-label='Fechar']")
